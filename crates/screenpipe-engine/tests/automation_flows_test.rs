@@ -47,6 +47,10 @@ struct N8nState {
     /// When set, publishing answers 400 with this message (e.g. a trigger
     /// whose credentials n8n cannot use).
     refuse_publish: Option<String>,
+    /// When set, the next publish publishes this version instead of the
+    /// requested one: the n8n editor saved a newer version in the window
+    /// between ScreenPipe's read and its publish.
+    publish_as: Option<String>,
     /// When set, the workflow list answers at most this many per page (n8n
     /// pages by `limit` and an opaque `cursor`).
     page_size: Option<usize>,
@@ -144,10 +148,18 @@ impl FakeN8n {
     fn start_execution_as(&self, workflow_id: &str, status: &str, polls: Option<u32>) {
         let mut state = self.0.lock().unwrap();
         let id = format!("exec{}", state.executions.len() + 1);
+        // The workflow version the run executes, as n8n records it.
+        let version = state
+            .workflows
+            .iter()
+            .find(|w| w["id"] == workflow_id)
+            .and_then(|w| w["versionId"].as_str())
+            .map(str::to_string);
         state.executions.insert(
             0,
             json!({
                 "id": id, "workflowId": workflow_id, "status": status,
+                "workflowVersionId": version,
                 "startedAt": "2026-10-17T09:00:00.000Z", "stoppedAt": null,
                 "finishAfterPolls": polls
             }),
@@ -172,6 +184,18 @@ impl FakeN8n {
             .find(|e| e["id"] == id)
             .cloned()
             .expect("execution exists in fake n8n")
+    }
+
+    /// The run n8n created to retry `original` (`POST /executions/:id/retry`),
+    /// with the workflow version that executed it (`loadWorkflow`).
+    fn retried_execution(&self, original: &str) -> Value {
+        let state = self.0.lock().unwrap();
+        state
+            .executions
+            .iter()
+            .find(|e| e["retryOf"] == original)
+            .cloned()
+            .unwrap_or_else(|| panic!("retry of {original} exists in fake n8n"))
     }
 
     /// The credentials n8n holds from now on (`id`, `name`, `type`).
@@ -371,14 +395,38 @@ impl Respond for FakeN8n {
                 if let Some(message) = &state.refuse_publish {
                     return json_response(400, json!({"message": message}));
                 }
+                // The editor's save racing ScreenPipe's publish, if armed.
+                let surprise = state.publish_as.take();
                 match state.workflows.iter_mut().find(|w| w["id"] == *id) {
                     Some(workflow) => {
-                        let version = body["versionId"]
-                            .as_str()
-                            .map(|v| json!(v))
-                            .unwrap_or_else(|| workflow["versionId"].clone());
+                        // n8n publishes a version the workflow holds: it
+                        // refuses a `versionId` the workflow no longer has
+                        // (edited since), never silently publishes a stale
+                        // one.
+                        let current = workflow["versionId"].as_str().unwrap_or_default();
+                        if body["versionId"].as_str().is_some_and(|version| version != current) {
+                            let asked = body["versionId"].as_str().unwrap();
+                            return json_response(
+                                409,
+                                json!({"message": format!(
+                                    "The workflow has no version \"{asked}\"; its current version is \"{current}\"."
+                                )}),
+                            );
+                        }
+                        let version = match surprise {
+                            // The n8n editor saved a newer version after
+                            // ScreenPipe's read: n8n publishes what it holds.
+                            Some(surprise) => {
+                                workflow["versionId"] = json!(surprise);
+                                surprise
+                            }
+                            None => body["versionId"]
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| current.to_string()),
+                        };
                         workflow["active"] = json!(true);
-                        workflow["activeVersionId"] = version;
+                        workflow["activeVersionId"] = json!(version);
                         json_response(200, workflow.clone())
                     }
                     None => json_response(404, json!({"message": "Not Found"})),
@@ -442,6 +490,20 @@ impl Respond for FakeN8n {
                 retried["workflowId"] = original["workflowId"].clone();
                 retried["mode"] = json!("retry");
                 retried["retryOf"] = json!(id);
+                // n8n honors the `loadWorkflow` it was sent: the retried run
+                // executes the workflow as saved now (true) or as the failed
+                // run saved it (false).
+                let as_saved_now = state
+                    .workflows
+                    .iter()
+                    .find(|w| w["id"] == original["workflowId"])
+                    .and_then(|w| w["versionId"].as_str())
+                    .map(str::to_string);
+                retried["workflowVersionId"] = if body["loadWorkflow"] == true {
+                    as_saved_now.map(|version| json!(version)).unwrap_or(Value::Null)
+                } else {
+                    original["workflowVersionId"].clone()
+                };
                 retried["startedAt"] = json!("2026-10-17T12:00:00.000Z");
                 retried["stoppedAt"] = json!("2026-10-17T12:00:09.000Z");
                 if retried["status"] == "success" {
@@ -1569,6 +1631,92 @@ async fn activate_publishes_the_reviewed_version_and_logs_it() {
     assert_eq!(reloaded["reviewedVersionId"], "version-1");
     assert_eq!(reloaded["activationLog"], flow["activationLog"]);
     assert_eq!(app.store()["flows"][&id]["reviewedVersionId"], "version-1");
+}
+
+#[tokio::test]
+async fn a_publish_of_another_version_is_undone_and_never_recorded_as_reviewed() {
+    // The n8n editor saved a newer version in the window between
+    // ScreenPipe's read and its publish, and n8n publishes that one: what n8n
+    // actually published must never be recorded as user-reviewed (only the
+    // version the user read goes live, README "Design rules" 3).
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let (_, created) = app.create_from_task().await;
+    let id = created["id"].as_str().unwrap().to_string();
+
+    n8n.0.lock().unwrap().publish_as = Some("version-2".into());
+    let (status, body) = app
+        .ui_call(
+            "POST",
+            &format!("/automation-flows/{id}/activate"),
+            Some(json!({"versionId": "version-1"})),
+        )
+        .await;
+
+    // The user read version-1; n8n answered with version-2: refused.
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "version_changed");
+
+    // Never recorded as reviewed, nothing logged.
+    assert_eq!(app.store()["flows"][&id]["reviewedVersionId"], Value::Null);
+    assert_eq!(app.store()["flows"][&id]["activationLog"], json!([]));
+
+    // The surprise publication is undone: no version the user did not read
+    // is left running in n8n.
+    assert_eq!(n8n.workflows()[0]["active"], false);
+    assert_eq!(n8n.workflows()[0]["activeVersionId"], Value::Null);
+    assert_eq!(
+        posts_ending_with(&server, "/unpublish").await,
+        vec![(format!("/api/v1/workflows/{id}/unpublish"), Value::Null)]
+    );
+
+    // The Flow reads as a Draft again, waiting for a review of what n8n now
+    // holds (version-2, the editor's save).
+    let (_, flow) = app
+        .call("GET", &format!("/automation-flows/{id}"), None)
+        .await;
+    assert_eq!(flow["status"], "draft");
+    assert_eq!(flow["reviewedVersionId"], Value::Null);
+    assert_eq!(flow["activationLog"], json!([]));
+}
+
+#[tokio::test]
+async fn the_fake_n8n_refuses_to_publish_a_version_the_workflow_no_longer_holds() {
+    // Harness contract, checked straight against the fake: n8n publishes a
+    // version the workflow holds; a stale `versionId` is refused and changes
+    // nothing, so a ScreenPipe bug that publishes one can only fail loudly
+    // (n8n's refusal reaches the user), never silently.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let (_, created) = app.create_from_task().await;
+    let id = created["id"].as_str().unwrap().to_string();
+    n8n.edit_workflow(&id, |w| w["versionId"] = json!("version-2"));
+
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "x-n8n-api-key",
+        axum::http::HeaderValue::from_str(API_KEY).unwrap(),
+    );
+    let publish = |version: &str| wiremock::Request {
+        url: format!("http://n8n.test/api/v1/workflows/{id}/publish")
+            .parse()
+            .unwrap(),
+        method: axum::http::Method::POST.clone(),
+        headers: headers.clone(),
+        body: serde_json::to_vec(&json!({"versionId": version})).unwrap(),
+    };
+
+    // The version the workflow no longer holds: refused, nothing published.
+    let _ = n8n.respond(&publish("version-1"));
+    assert_eq!(n8n.workflows()[0]["active"], false);
+    assert_eq!(n8n.workflows()[0]["activeVersionId"], Value::Null);
+
+    // The version it holds: published.
+    let _ = n8n.respond(&publish("version-2"));
+    assert_eq!(n8n.workflows()[0]["active"], true);
+    assert_eq!(n8n.workflows()[0]["activeVersionId"], "version-2");
 }
 
 #[tokio::test]
@@ -3862,6 +4010,7 @@ fn gmail_email(sender: &str, subject: &str, text: &str) -> Value {
 fn failed_run(id: &str, workflow_id: &str) -> Value {
     json!({
         "id": id, "workflowId": workflow_id, "status": "error", "finished": false,
+        "workflowVersionId": "version-1",
         "startedAt": "2026-10-17T09:00:00.000Z", "stoppedAt": "2026-10-17T09:00:09.000Z",
         "data": {"resultData": {
             "runData": {
@@ -4069,6 +4218,7 @@ fn demo_run(
         .unwrap_or("Read the email (AI)");
     json!({
         "id": id, "workflowId": workflow_id, "status": "success", "finished": true,
+        "workflowVersionId": "version-1",
         "startedAt": started_at, "stoppedAt": started_at,
         "data": {"resultData": {"runData": run_data, "lastNodeExecuted": last}}
     })
@@ -5225,6 +5375,14 @@ async fn a_retry_never_runs_a_change_nobody_reviewed_or_published() {
             ("/api/v1/executions/exec-3/retry".to_string(), json!({"loadWorkflow": false})),
         ]
     );
+
+    // n8n honors the `loadWorkflow` it was sent: each retried run records
+    // which workflow version executed it — the one the failed run saved,
+    // never the unreviewed chat edit or the unpublished n8n draft.
+    let ran = |original: &str| n8n.retried_execution(original)["workflowVersionId"].clone();
+    assert_eq!(ran("exec-1"), json!("version-1"), "the chat edit must not run");
+    assert_eq!(ran("exec-2"), json!("n8n-fix"), "the published fix runs");
+    assert_eq!(ran("exec-3"), json!("version-1"), "the n8n draft must not run");
 }
 
 #[tokio::test]

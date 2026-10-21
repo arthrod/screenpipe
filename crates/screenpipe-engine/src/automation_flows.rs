@@ -1489,7 +1489,10 @@ fn from_user(state: &FlowsState, headers: &HeaderMap) -> bool {
 /// Activation: publishes in n8n exactly the version the user reviewed, records
 /// it as the reviewed version and logs it. Only the Review Screen's
 /// "Turn on" button calls this route; nothing in the engine calls it, and it
-/// is refused without the UI credential ([`FlowActivationKey`]).
+/// is refused without the UI credential ([`FlowActivationKey`]). A publish
+/// that answers with another version (the workflow was changed in n8n
+/// between the read above and the publish) is undone and refused: what n8n
+/// actually published is never recorded as user-reviewed.
 async fn activate_flow(
     State(state): State<FlowsState>,
     Path(id): Path<String>,
@@ -1539,6 +1542,20 @@ async fn activate_flow(
         .as_str()
         .unwrap_or(&version)
         .to_string();
+    if published_version != version {
+        // n8n published another version than the one the user read (it was
+        // changed in n8n between the read above and the publish). Only the
+        // version the user read goes live (README "Design rules" 3): undo
+        // the publication and refuse — never record as reviewed a version
+        // the user did not read.
+        if let Err(error) = api.switch(&id, "unpublish", None).await {
+            tracing::error!(
+                "automation flows: {id} published \"{published_version}\" instead of \
+                 \"{version}\", and switching it back off failed: {error:?}"
+            );
+        }
+        return Err(FlowError::VersionChanged);
+    }
     let record = store.record_mut(&id);
     record.reviewed_version_id = Some(published_version.clone());
     // Turned on: no longer set aside.
