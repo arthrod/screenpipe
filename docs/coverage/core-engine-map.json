@@ -1565,7 +1565,8 @@
       "files": [
         "src/automation_flows.rs",
         "src/automation_flows/health.rs",
-        "tests/automation_flows_test.rs"
+        "tests/automation_flows_test.rs",
+        "src/automation_flows/failures.rs"
       ],
       "platforms": [
         "windows",
