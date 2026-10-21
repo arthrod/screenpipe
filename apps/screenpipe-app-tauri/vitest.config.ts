@@ -6,6 +6,13 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import { collectBunTestFiles } from "./scripts/bun-test-files";
 
+// `formatDate` renders in the machine's local zone (no `timeZone` option), so
+// fixtures with hardcoded calendar dates pass in one zone and fail in another
+// (02:05Z is still "Oct 16" anywhere from UTC-3 westward). CI already runs in
+// UTC: pin the workers to UTC too, so every contributor run matches CI. An
+// explicit `TZ` on the command line still wins, for hostile-zone checks.
+process.env.TZ ??= "UTC";
+
 // Node 25+ turns on its own Web Storage: its `localStorage` global (undefined
 // without `--localstorage-file`) hides jsdom's, and every test touching it
 // fails. Switch it off in the test workers on the Node versions that have it.

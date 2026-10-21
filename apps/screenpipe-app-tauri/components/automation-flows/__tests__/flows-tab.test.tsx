@@ -774,8 +774,11 @@ describe("Review Screen", () => {
   });
 
   it("shows each time the user did the task by hand, as a strip of its captures", async () => {
-    const email = { frameId: -1, timestamp: "2026-10-17T02:05:41Z", app: "Gmail", image: "data:image/webp;base64,AAAA" };
-    const ticket = { frameId: 4242, timestamp: "2026-10-17T02:08:36Z", app: "Jira", image: "data:image/png;base64,BBBB" };
+    // Mid-day UTC like the fixtures above (02:05Z is already Oct 16 west of
+    // UTC-3): the card's date stays "Oct 17" from UTC-9 to UTC+11, so the
+    // assertion below is not timezone-fragile.
+    const email = { frameId: -1, timestamp: "2026-10-17T12:05:41Z", app: "Gmail", image: "data:image/webp;base64,AAAA" };
+    const ticket = { frameId: 4242, timestamp: "2026-10-17T12:08:36Z", app: "Jira", image: "data:image/png;base64,BBBB" };
     const repetitions = vi.fn(async () => [
       { title: "Repetition 1 · Arthur Noteris → NOVA-25 (Bug)", captures: [email, { ...email, frameId: -2, app: "Jira" }, ticket] },
       { title: "Repetition 2 · Loris Omont → NOVA-26 (Bug)", captures: [] },
@@ -792,8 +795,11 @@ describe("Review Screen", () => {
   });
 
   it("opens a capture large, with the timeline only for a recorder frame of this machine", async () => {
-    const email = { frameId: -1, timestamp: "2026-10-17T02:05:41Z", app: "Gmail", image: "data:image/webp;base64,AAAA" };
-    const ticket = { frameId: 4242, timestamp: "2026-10-17T02:08:36Z", app: "Jira", image: "data:image/png;base64,BBBB" };
+    // Mid-day UTC like the fixtures above: the capture dialog's date is
+    // asserted timezone-independently, but keep the fixtures in the same
+    // safe window anyway.
+    const email = { frameId: -1, timestamp: "2026-10-17T12:05:41Z", app: "Gmail", image: "data:image/webp;base64,AAAA" };
+    const ticket = { frameId: 4242, timestamp: "2026-10-17T12:08:36Z", app: "Jira", image: "data:image/png;base64,BBBB" };
     const api = fakeApi({
       repetitions: vi.fn(async () => [{ title: "Repetition 1 · Arthur Noteris → NOVA-25 (Bug)", captures: [email, ticket] }]),
     });
