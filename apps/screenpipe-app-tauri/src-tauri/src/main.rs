@@ -82,7 +82,7 @@ mod enterprise;
 #[cfg(any(
     test,
     all(
-        feature = "enterprise-build",
+        feature = "enterprise-support",
         any(target_os = "macos", target_os = "windows")
     )
 ))]
@@ -90,6 +90,7 @@ mod enterprise_autostart;
 mod enterprise_config_file;
 mod enterprise_host_identity;
 mod enterprise_install_metadata;
+mod app_mode;
 mod enterprise_policy;
 mod enterprise_recording_access;
 mod enterprise_sync;
@@ -477,6 +478,11 @@ macro_rules! define_specta_builder {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(target_os = "macos")]
+    if let Some(code) = screenpipe_audio::core::vpio_process::run_hidden_mode().await {
+        std::process::exit(code);
+    }
+
     // Invoked by the scoped video tool, before any application side effects.
     let arguments: Vec<String> = std::env::args().collect();
     if arguments.get(1).is_some_and(|arg| arg == "--render-workflow-video") {
@@ -986,7 +992,7 @@ async fn main() {
         last_spawn_epoch: Arc::new(AtomicU64::new(0)),
         wants_recording: Arc::new(AtomicBool::new(false)),
         deferred_account_start: Default::default(),
-        #[cfg(feature = "enterprise-build")]
+        #[cfg(feature = "enterprise-support")]
         authorization_recovery: Default::default(),
         interrupted_meeting: Arc::new(tokio::sync::Mutex::new(None)),
         cloud_token: Arc::new(arc_swap::ArcSwap::new(Arc::new(initial_cloud_token))),
@@ -1489,6 +1495,10 @@ async fn main() {
                 std::io::Error::other(e)
             })?;
             let search_only_startup = crate::search_only::initialize(from_autostart);
+            #[cfg(target_os = "windows")]
+            if search_only_startup {
+                tray::sync_search_visibility(&app_handle)?;
+            }
 
             #[cfg(feature = "e2e")]
             e2e::seeds::apply_settings(app.handle(), &mut store);
@@ -2272,10 +2282,8 @@ async fn main() {
             app_handle.manage(update_manager.clone()); // Register for state::<Arc<UpdatesManager>>()
 
             // Setup tray
-            if let Some(_) = app_handle.tray_by_id("screenpipe_main") {
-                if let Err(e) = tray::setup_tray(&app_handle, update_manager.update_now_menu_item_ref()) {
-                    error!("Failed to setup tray: {}", e);
-                }
+            if let Err(e) = tray::setup_tray(&app_handle, update_manager.update_now_menu_item_ref()) {
+                error!("Failed to setup tray: {}", e);
             }
 
             // Log tray icon position for diagnostics.
@@ -2331,7 +2339,7 @@ async fn main() {
             );
 
             #[cfg(all(
-                feature = "enterprise-build",
+                feature = "enterprise-support",
                 any(target_os = "macos", target_os = "windows")
             ))]
             enterprise_autostart::spawn(&app_handle);
@@ -2524,9 +2532,8 @@ async fn main() {
             // Enterprise accounts out while allowing Screenpipe's own org.
             data_sync::spawn(&app_handle);
 
-            // Standard builds: authenticated, default-enabled support logs.
-            // Enterprise builds compile this as a no-op because their managed
-            // license-authenticated collector above is mandatory.
+            // Personal mode uses authenticated support-log consent. Managed
+            // mode uses the license-authenticated collector above.
             remote_support_logs::spawn(&app_handle);
 
             // Disable removed Storage cloud backends if old settings enabled them.

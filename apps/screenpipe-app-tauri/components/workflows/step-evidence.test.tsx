@@ -59,7 +59,7 @@ describe("missing attached screenshots", () => {
       expect(load).not.toHaveBeenCalled();
       act(() => observe([{ isIntersecting: true }]));
       expect(await screen.findByRole("img")).toBeVisible();
-      expect(disconnect).not.toHaveBeenCalled();
+      expect(disconnect).toHaveBeenCalled();
     } finally { cleanup(); vi.unstubAllGlobals(); }
   });
   it("tries another source when the first capture is unavailable", async () => {
@@ -274,7 +274,7 @@ describe("evidence carousel", () => {
 });
 
 describe("recorder references", () => {
-  it("loads only the shown reference while visible and releases its image when it leaves", async () => {
+  it("loads only the shown reference lazily, keeps it off screen, and releases it when the carousel moves on", async () => {
     const observers = new Map<Element, (entries: { isIntersecting: boolean }[]) => void>();
     vi.stubGlobal("IntersectionObserver", class {
       callback: (entries: { isIntersecting: boolean }[]) => void;
@@ -296,10 +296,13 @@ describe("recorder references", () => {
       await screen.findByRole("img");
       expect(load).toHaveBeenCalledTimes(1);
       act(() => observers.get(figure())!([{ isIntersecting: false }]));
+      // Scrolling away keeps the image so the page height does not change.
+      expect(revoke).not.toHaveBeenCalled();
+      expect(load.mock.calls[0][2].aborted).toBe(false);
+      expect(screen.getByRole("img")).toHaveAttribute("src", `blob:${first.frameId}`);
+      fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
       await waitFor(() => expect(revoke).toHaveBeenCalledWith(`blob:${first.frameId}`));
       expect(load.mock.calls[0][2].aborted).toBe(true);
-      expect(screen.queryByRole("img")).toBeNull();
-      fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
       expect(load).toHaveBeenCalledTimes(1);
       act(() => observers.get(figure())!([{ isIntersecting: true }]));
       expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:9002");
@@ -335,7 +338,7 @@ describe("authored image list (editor)", () => {
     await waitFor(() => expect(open).toHaveBeenCalledWith(second.frameId, second.timestamp));
   });
 
-  it("loads each reference only while visible and releases its image off screen", async () => {
+  it("loads references lazily, retains them off screen, and releases them on unmount", async () => {
     const observers = new Map<Element, (entries: { isIntersecting: boolean }[]) => void>();
     vi.stubGlobal("IntersectionObserver", class {
       callback: (entries: { isIntersecting: boolean }[]) => void;
@@ -349,19 +352,24 @@ describe("authored image list (editor)", () => {
     const second = { ...first, frameId: 9002, timestamp: "2026-09-22T11:02:00Z" };
     const load = vi.fn().mockImplementation(async (_timestamp, _app, _signal, id) => ({ ...(id === first.frameId ? first : second), dataUrl: `blob:${id}` }));
     try {
-      const { container } = render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} onImageLayoutChange={vi.fn()} />);
+      const { container, unmount } = render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} onImageLayoutChange={vi.fn()} />);
       const figures = container.querySelectorAll("figure");
       expect(load).not.toHaveBeenCalled();
       act(() => observers.get(figures[0])!([{ isIntersecting: true }]));
       await screen.findByRole("img");
       expect(load).toHaveBeenCalledTimes(1);
       act(() => observers.get(figures[0])!([{ isIntersecting: false }]));
-      await waitFor(() => expect(revoke).toHaveBeenCalledWith(`blob:${first.frameId}`));
-      expect(load.mock.calls[0][2].aborted).toBe(true);
-      expect(screen.queryByRole("img")).toBeNull();
+      expect(revoke).not.toHaveBeenCalled();
+      expect(load.mock.calls[0][2].aborted).toBe(false);
+      expect(screen.getByRole("img")).toHaveAttribute("src", `blob:${first.frameId}`);
       act(() => observers.get(figures[1])!([{ isIntersecting: true }]));
-      expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:9002");
+      await waitFor(() => expect(screen.getAllByRole("img")).toHaveLength(2));
+      expect(screen.getAllByRole("img")[1]).toHaveAttribute("src", "blob:9002");
       expect(load).toHaveBeenCalledTimes(2);
+      unmount();
+      expect(revoke).toHaveBeenCalledWith(`blob:${first.frameId}`);
+      expect(revoke).toHaveBeenCalledWith("blob:9002");
+      expect(load.mock.calls.every(call => call[2].aborted)).toBe(true);
     } finally { cleanup(); vi.unstubAllGlobals(); }
   });
 

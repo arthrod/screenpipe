@@ -161,16 +161,25 @@ function EvidenceFigure({ capture, stage, platform, suffix, expanded = false, se
   const url = load ? preview.image?.dataUrl : capture.dataUrl;
   const [failed, setFailed] = useState(false);
   const [ratio, setRatio] = useState("16 / 10");
+  const viewer = useRef<HTMLDialogElement>(null);
   useEffect(() => setFailed(false), [url]);
   // A fixed frame keeps the page short and steady while captures load or change.
   return <figure ref={preview.ref} className={`${styles.figure} ${review ? expanded ? styles.expanded : "" : selected ? styles.selected : ""}`}>
     {url && !failed ? review ? <button className={styles.imageButton} type="button" aria-label={`${expanded ? "Reduce" : "Enlarge"} screenshot${suffix} for ${stage.name}`} aria-expanded={expanded} onClick={toggle}>
       <img src={url} alt={`Captured reference${suffix} for ${stage.name}`} loading="lazy" decoding="async" draggable={false} data-lm-disable="true" onError={() => setFailed(true)} />
       <span className={styles.zoom}>{expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</span>
-    </button> : <button className={styles.imageButton} type="button" aria-label={`Select screenshot${suffix} for ${stage.name}`} aria-pressed={selected} onClick={select}
+    </button> : <div className={styles.imageSurface}><button className={styles.imageButton} type="button" aria-label={`Select screenshot${suffix} for ${stage.name}`} aria-pressed={selected} onClick={select}
       onKeyDown={event => { if (selected && actions && ["Delete", "Backspace"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); actions.remove(); } }}>
       <img src={url} alt={`Captured reference${suffix} for ${stage.name}`} loading="lazy" decoding="async" draggable={false} data-lm-disable="true" onLoad={event => { const image = event.currentTarget; if (image.naturalWidth && image.naturalHeight) setRatio(`${image.naturalWidth} / ${image.naturalHeight}`); }} onError={() => setFailed(true)} />
-    </button> : <div className={review ? `${styles.previewStatus} ${styles.frameStatus}` : styles.previewStatus} role="status" style={!review && preview.status === "loading" && !failed ? { aspectRatio: ratio } : undefined}>
+    </button>
+      <button type="button" className={styles.enlarge} aria-label={`Enlarge screenshot${suffix} for ${stage.name}`} title="Enlarge screenshot" onClick={() => viewer.current?.showModal()}><Maximize2 size={16} /></button>
+      <dialog ref={viewer} className={styles.viewer} aria-label={`Enlarged screenshot${suffix} for ${stage.name}`}
+        onKeyDown={event => event.stopPropagation()}
+        onClick={event => { if (event.target === event.currentTarget) event.currentTarget.close(); }}>
+        <div className={styles.viewerToolbar}><button type="button" autoFocus aria-label="Close screenshot" onClick={() => viewer.current?.close()}><X size={18} /></button></div>
+        <img src={url} alt={`Captured reference${suffix} for ${stage.name}`} draggable={false} />
+      </dialog>
+    </div> : <div className={review ? `${styles.previewStatus} ${styles.frameStatus}` : styles.previewStatus} role="status" style={!review && preview.status === "loading" && !failed ? { aspectRatio: ratio } : undefined}>
       {failed || preview.status === "error" ? "Could not load the source screenshot." : preview.status === "loading" ? "Loading source screenshot…" : "This screenshot is no longer available."}
       {(failed || preview.status === "error") && load && <button onClick={() => { setFailed(false); preview.retry(); }}>Retry screenshot</button>}
     </div>}

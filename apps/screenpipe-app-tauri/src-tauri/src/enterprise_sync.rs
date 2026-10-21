@@ -13,13 +13,13 @@
 //!   - resolves the app data dir for the cursor file
 //!   - spawns the long-running task with a tokio shutdown channel
 //!
-//! Everything is gated by `#[cfg(feature = "enterprise-build")]` — consumer
-//! builds compile this file as a no-op.
+//! Managed capabilities compile into the standard app. Runtime account and
+//! deployment checks keep personal installs out of enrollment and uploads.
 
-#[cfg(feature = "enterprise-build")]
+#[cfg(feature = "enterprise-support")]
 use crate::enterprise::sync as ee_sync;
 
-#[cfg(feature = "enterprise-build")]
+#[cfg(feature = "enterprise-support")]
 mod imp {
     use super::ee_sync;
     use crate::recording::local_api_context_from_app;
@@ -1319,6 +1319,8 @@ mod imp {
 
     #[derive(Deserialize)]
     struct NativePolicyResponse {
+        #[serde(rename = "licenseId", default)]
+        license_id: Option<String>,
         #[serde(rename = "hiddenSections", default)]
         hidden_sections: Vec<String>,
         #[serde(rename = "lockedSettings", default)]
@@ -1508,11 +1510,22 @@ mod imp {
                 "policy",
             ));
         }
-        let policy = response
+        let response = response
             .json::<NativePolicyResponse>()
             .await
-            .map(NativePolicyResponse::into_native_policy)
             .map_err(|error| NativePolicyFetchError::Unavailable(error.to_string()))?;
+        if let Some(license_id) = response.license_id.as_deref() {
+            // Authenticate the workspace independently of rotating keys/tokens.
+            // Resolve the configured heartbeat URL too, including custom routes.
+            let (_, endpoint) = authorization_endpoint_urls();
+            crate::enterprise::recording_events::bind(
+                &crate::config::app_data_dir(),
+                license_id,
+                device_id,
+                &endpoint,
+            );
+        }
+        let policy = response.into_native_policy();
         // GET authenticated this workspace's policy. Apply AI setup before
         // recording-paused branches or fallible enrollment/settings work can
         // discard it. This never grants recording or bypasses seat checks.
@@ -1593,37 +1606,32 @@ mod imp {
         credential: &EnterprisePolicyCredential,
         measurement: Option<&RecordingMeasurement>,
     ) -> Result<(), NativePolicyFetchError> {
+        let pending = crate::enterprise::recording_events::pending(device_id, heartbeat_url);
         let request = http.post(heartbeat_url).json(&serde_json::json!({
             "device_id": device_id,
             "hostname": hostname::get().ok().and_then(|value| value.into_string().ok()),
             "platform": std::env::consts::OS,
             "app_version": env!("CARGO_PKG_VERSION"),
             "recording_lifecycle": crate::search_only::recording_lifecycle(),
+            "recording_event": pending.as_ref().map(|(_, event)| event),
             "recording_status": {
                 "frame_status": measurement.and_then(|value| value.frame_status.as_deref()).unwrap_or("unknown"),
                 "audio_status": measurement.and_then(|value| value.audio_status.as_deref()).unwrap_or("unknown"),
             },
         }));
         let request = apply_enterprise_credential(request, credential);
-        let response = request
-            .send()
+        let (status, body) = crate::enterprise::recording_events::send_heartbeat(request, pending)
             .await
             .map_err(|error| NativePolicyFetchError::Unavailable(error.to_string()))?;
-        if response.status().is_success() {
+        if status.is_success() {
             return Ok(());
         }
-
-        let status = response.status();
-        let code = response
-            .json::<EnterpriseErrorResponse>()
-            .await
-            .ok()
-            .and_then(|body| body.code);
+        let code = body.get("code").and_then(|value| value.as_str());
         // Generic 403 still includes seat exhaustion. Policy validity alone
         // must never bypass the enrollment limit that heartbeat enforces.
         Err(classify_failed_enterprise_response(
             status,
-            code.as_deref(),
+            code,
             "heartbeat",
         ))
     }
@@ -1998,6 +2006,10 @@ mod imp {
                 tokio::time::sleep(startup_delay).await;
             }
             loop {
+                if !crate::app_mode::is_managed(&app) {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    continue;
+                }
                 let was_hidden = crate::enterprise_policy::is_app_ui_hidden();
                 let device_id = settings_device_id(&app).unwrap_or_else(|| "unknown".to_string());
                 // Re-resolve the live instance port and auth key each turn:
@@ -2086,6 +2098,26 @@ mod imp {
                         let _ =
                             crate::enterprise_recording_access::revoke_enterprise_recording(&app)
                                 .await;
+                        // Stop capture before any reporting I/O: a failed
+                        // heartbeat must never delay the admin's pause.
+                        if crate::enterprise::recording_events::pending(&device_id, &heartbeat_url)
+                            .is_some()
+                        {
+                            for credential in current_policy_credentials() {
+                                if send_enrollment_heartbeat(
+                                    &http,
+                                    &heartbeat_url,
+                                    &device_id,
+                                    &credential,
+                                    None,
+                                )
+                                .await
+                                .is_ok()
+                                {
+                                    break;
+                                }
+                            }
+                        }
                     }
                     NativeAuthorizationResult::RequiresAccount => {
                         warn!(
@@ -2124,6 +2156,7 @@ mod imp {
                 tokio::select! {
                     _ = tokio::time::sleep(next_poll) => {},
                     _ = crate::search_only::lifecycle_changed() => {},
+                    _ = crate::enterprise::recording_events::changed() => {},
                 }
             }
         });
@@ -2213,7 +2246,9 @@ mod imp {
         // Point the stalled-upload watchdog at the real app-log dirs. App logs
         // live in the screenpipe data dir (RollingFileAppender), NOT Tauri's
         // app_data_dir — so the from_env default would miss them.
-        let mut log_dirs = Vec::new();
+        // Lifecycle outbox diagnostics live with settings, which can differ
+        // from the engine's current recording directory after a data move.
+        let mut log_dirs = vec![crate::config::app_data_dir().to_path_buf()];
         if let Ok(d) = crate::log_files::get_screenpipe_data_dir(app) {
             log_dirs.push(d);
         }
@@ -2245,6 +2280,10 @@ mod imp {
             //      so the next tick starts sync with zero manual config.
             const CONFIG_POLL_SECS: u64 = 60;
             let cfg = loop {
+                if !crate::app_mode::is_managed(&auth_gate_app) {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    continue;
+                }
                 let file_cfg = crate::commands::get_enterprise_file_config();
                 if let Some(cfg) = EnterpriseSyncConfig::from_env_with_fallback(
                     app_data_dir.clone(),
@@ -3018,6 +3057,7 @@ mod imp {
         #[test]
         fn hidden_ui_policy_matches_frontend_section_normalization() {
             let response = NativePolicyResponse {
+                license_id: None,
                 hidden_sections: vec!["app_ui".to_string(), "app_ui".to_string()],
                 locked_settings: HashMap::from([
                     ("recording".to_string(), serde_json::Value::Bool(true)),
@@ -3447,16 +3487,16 @@ mod imp {
     }
 }
 
-#[cfg(feature = "enterprise-build")]
+#[cfg(feature = "enterprise-support")]
 pub use imp::{configure_telemetry_context, spawn};
 
-#[cfg(feature = "enterprise-build")]
+#[cfg(feature = "enterprise-support")]
 pub(crate) use imp::{authorize_startup, verify_recording_authorization};
 
-#[cfg(not(feature = "enterprise-build"))]
+#[cfg(not(feature = "enterprise-support"))]
 pub fn configure_telemetry_context(_app: &tauri::AppHandle) {}
 
-#[cfg(not(feature = "enterprise-build"))]
+#[cfg(not(feature = "enterprise-support"))]
 pub(crate) async fn verify_recording_authorization(
     _app: &tauri::AppHandle,
     _credential_type: Option<&str>,
@@ -3465,13 +3505,13 @@ pub(crate) async fn verify_recording_authorization(
     Err("enterprise recording authorization requires an Enterprise build".to_string())
 }
 
-#[cfg(not(feature = "enterprise-build"))]
+#[cfg(not(feature = "enterprise-support"))]
 pub(crate) fn authorize_startup(_app: &tauri::AppHandle) -> bool {
     unreachable!("consumer startup authentication does not use Enterprise policy")
 }
 
 /// No-op stub for non-enterprise builds. Returns None so callers can ignore.
-#[cfg(not(feature = "enterprise-build"))]
+#[cfg(not(feature = "enterprise-support"))]
 pub fn spawn(_app: &tauri::AppHandle) -> Option<tokio::sync::watch::Sender<bool>> {
     None
 }
