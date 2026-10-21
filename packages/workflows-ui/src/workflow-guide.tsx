@@ -600,7 +600,10 @@ export function WorkflowGuide({
                             });
                           }}
                         />
-                      ) : !image && !stale && guideStepIncludesImage(step) && !step.imageReview && sourceStage !== null && workflow.stages[sourceStage] ? (
+                        // Only steps that explicitly include an image prefetch
+                        // recorder evidence; legacy includeImage:false drafts keep
+                        // showing an attached capture with no recorder loads.
+                      ) : !image && !stale && step.includeImage && !step.imageReview && sourceStage !== null && workflow.stages[sourceStage] ? (
                         <SourceSopScreenshot onRemove={() => changeStep(i, { includeImage: false, imageExcluded: true })} stage={workflow.stages[sourceStage!]} load={platform.loadSourceScreenshot} title={step.title} />
                       ) : !image ? (
                         <p className={styles.muted}>
