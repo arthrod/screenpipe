@@ -4,6 +4,7 @@
 
 import type { JsonValue, User } from "@/lib/utils/tauri";
 import { screenpipeWebUrl } from "@/lib/web-url";
+import { isSelfHostUnlocked } from "@/lib/self-host";
 
 export type AppEntitlementPlan =
   | "none"
@@ -276,6 +277,7 @@ export function getLocalPlanPolicy(
 export function isFreeOrUnattributedUser(
   user: AppUser | null | undefined,
 ): boolean {
+  if (isSelfHostUnlocked()) return false;
   return getLocalPlanPolicy(user) !== "verified-paid";
 }
 

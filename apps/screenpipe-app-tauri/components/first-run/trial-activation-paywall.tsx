@@ -27,6 +27,10 @@ import {
 } from "@/lib/first-run/trial-activation";
 import { useGT } from "gt-react";
 import { useUiLocale } from "@/lib/i18n/provider";
+import {
+  SelfHostContinueButton,
+  unlockTrialActivation,
+} from "@/components/self-host-continue-button";
 
 
 const HOSTED_CHECKOUT_URL = screenpipeWebUrl(
@@ -144,18 +148,6 @@ export function TrialActivationPaywall({
     }
   }, [checkoutToken, locale]);
 
-  React.useEffect(() => {
-    if (!open || !tokenResolved || !checkoutToken || returnedWithoutStatus) {
-      return;
-    }
-    startCheckout();
-  }, [
-    checkoutToken,
-    open,
-    returnedWithoutStatus,
-    startCheckout,
-    tokenResolved,
-  ]);
 
   if (!open) return null;
   return (
@@ -167,7 +159,7 @@ export function TrialActivationPaywall({
         onPointerDownOutside={(event) => event.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Opening secure checkout</DialogTitle>
+          <DialogTitle>Unlock full access</DialogTitle>
           <DialogDescription>
             Using the account you already signed into during onboarding.
             Nothing is charged today.
@@ -203,10 +195,13 @@ export function TrialActivationPaywall({
             </Button>
           </div>
         ) : (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            Loading screenpipe.com
-          </p>
+          <div className="space-y-4 py-6 text-center">
+            <Button className="w-full" onClick={startCheckout}>
+              Add payment method
+            </Button>
+          </div>
         )}
+        <SelfHostContinueButton onContinue={unlockTrialActivation} />
       </DialogContent>
     </Dialog>
   );

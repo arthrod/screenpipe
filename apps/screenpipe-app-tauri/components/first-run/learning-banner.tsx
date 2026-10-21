@@ -19,6 +19,10 @@ import { AgentHandoffPicker } from "@/components/first-run/agent-handoff-picker"
 import { useFirstRunLearningWindow } from "@/components/first-run/learning-window-provider";
 import type { AgentHandoffTarget } from "@/lib/first-run/agent-handoff";
 import { useGT } from "gt-react";
+import {
+  SelfHostContinueButton,
+  unlockTrialActivation,
+} from "@/components/self-host-continue-button";
 
 
 function CapturedAppIcon({ app }: { app: FirstRunCapturedApp }) {
@@ -418,6 +422,9 @@ export function TrialActivationUnlockPrompt({
         >
           Start your 7-day free trial to unlock full access
         </Button>
+        <div className="mt-3">
+          <SelfHostContinueButton onContinue={unlockTrialActivation} />
+        </div>
       </div>
     </div>
   );

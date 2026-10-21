@@ -2597,7 +2597,7 @@ impl SettingsStore {
     /// server-verified plan evidence. Missing, conflicting, stale-paid, and
     /// future-dated evidence remains explicitly unknown.
     pub(crate) fn local_plan_policy(&self) -> LocalPlanPolicy {
-        if self.has_verified_paid_plan() {
+        if self.self_host_unlocked() || self.has_verified_paid_plan() {
             LocalPlanPolicy::VerifiedPaid
         } else if self.has_verified_free_plan() {
             LocalPlanPolicy::VerifiedFree
@@ -2622,10 +2622,20 @@ impl SettingsStore {
             .any(|id| !id.trim().is_empty())
     }
 
+    /// Self-host build: the user chose "continue without subscription"
+    /// (`lib/self-host.ts`). Local-only gates open; cloud features still need
+    /// real server entitlement.
+    pub(crate) fn self_host_unlocked(&self) -> bool {
+        self.extra
+            .get("selfHostUnlocked")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    }
+
     pub fn app_entitled_or_dev(&self) -> bool {
         // Debug builds (`bun tauri dev`, e2e, signed dev builds) are never gated.
         // Release builds must not be bypassable via a runtime env var.
-        if cfg!(debug_assertions) {
+        if cfg!(debug_assertions) || self.self_host_unlocked() {
             return true;
         }
 
@@ -3852,6 +3862,35 @@ mod tests {
         }));
 
         assert!(store.has_current_app_entitlement());
+    }
+
+    #[test]
+    fn self_host_unlock_opens_local_plan_gates_from_the_frontend_settings_key() {
+        let mut store = SettingsStore::default();
+        assert!(!store.self_host_unlocked());
+        assert_eq!(store.local_plan_policy(), LocalPlanPolicy::Unknown);
+
+        store
+            .extra
+            .insert("selfHostUnlocked".to_string(), json!(true));
+
+        assert!(store.self_host_unlocked());
+        assert_eq!(store.local_plan_policy(), LocalPlanPolicy::VerifiedPaid);
+        assert!(!store.is_free_or_unattributed_user());
+        assert!(store.app_entitled_or_dev());
+        // Survives the round trip through store.bin's catch-all map.
+        let reloaded: SettingsStore =
+            serde_json::from_value(serde_json::to_value(&store).unwrap()).unwrap();
+        assert!(reloaded.self_host_unlocked());
+    }
+
+    #[test]
+    fn self_host_unlock_ignores_non_true_values() {
+        let mut store = SettingsStore::default();
+        store
+            .extra
+            .insert("selfHostUnlocked".to_string(), json!("true"));
+        assert!(!store.self_host_unlocked());
     }
 
     #[test]

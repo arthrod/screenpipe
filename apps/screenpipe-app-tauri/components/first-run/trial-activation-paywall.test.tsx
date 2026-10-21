@@ -11,6 +11,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SELF_HOST_STORAGE_KEY } from "@/lib/self-host";
 
 const mocks = vi.hoisted(() => ({
   locale: "en",
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   getCloudToken: vi.fn(),
   setOnboardingStep: vi.fn().mockResolvedValue({ status: "ok", data: null }),
   loadUser: vi.fn(),
+  updateSettings: vi.fn(async () => undefined),
   user: null as {
     token?: string;
     has_payment_method?: boolean;
@@ -31,6 +33,7 @@ vi.mock("@/lib/hooks/use-settings", () => ({
   useSettings: () => ({
     settings: { user: mocks.user },
     loadUser: mocks.loadUser,
+    updateSettings: mocks.updateSettings,
   }),
 }));
 vi.mock("@/lib/utils/tauri", () => ({
@@ -66,6 +69,8 @@ let submitSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.locale = "en";
+  // The self-host choice persists in localStorage; keep it per-test.
+  window.localStorage?.removeItem?.(SELF_HOST_STORAGE_KEY);
   window.history.replaceState({}, "", "/home");
   document.querySelectorAll("form").forEach((form) => form.remove());
   window.sessionStorage.clear();
@@ -88,11 +93,19 @@ function checkoutForm(): HTMLFormElement {
   return form;
 }
 
+// Self-host build: checkout opens only when the user picks it.
+async function chooseCheckout() {
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Add payment method" }),
+  );
+}
+
 describe("TrialActivationPaywall", () => {
   it("passes the app language to the shared hosted checkout", async () => {
     mocks.locale = "ja";
     mocks.getCloudToken.mockResolvedValue("clerk-token");
     render(<TrialActivationPaywall open locked />);
+    await chooseCheckout();
     await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
     expect(checkoutForm().querySelector<HTMLInputElement>('input[name="locale"]')?.value).toBe("ja");
   });
@@ -103,6 +116,7 @@ describe("TrialActivationPaywall", () => {
     render(<TrialActivationPaywall open locked />);
 
     expect(screen.queryByText(/sign in/i)).not.toBeInTheDocument();
+    await chooseCheckout();
     await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
     const form = checkoutForm();
     expect(
@@ -124,12 +138,30 @@ describe("TrialActivationPaywall", () => {
 
     render(<TrialActivationPaywall open locked />);
 
+    await chooseCheckout();
     await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
     expect(
       checkoutForm().querySelector<HTMLInputElement>('input[name="token"]')
         ?.value,
     ).toBe("in-memory-token");
     expect(mocks.getCloudToken).not.toHaveBeenCalled();
+  });
+
+  it("unlocks the trial lock without a subscription and never opens checkout", async () => {
+    mocks.getCloudToken.mockResolvedValue("clerk-token");
+    render(<TrialActivationPaywall open locked />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Continue without subscription" }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.setOnboardingStep).toHaveBeenCalledWith(
+        "trial-activation-v1-unlocked",
+      ),
+    );
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ selfHostUnlocked: true });
+    expect(submitSpy).not.toHaveBeenCalled();
   });
 
   it("makes a browser-back return observable and requires an explicit retry", async () => {
