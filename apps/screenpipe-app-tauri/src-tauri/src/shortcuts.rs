@@ -19,13 +19,28 @@ use crate::commands::{hide_main_window, show_main_window};
 use crate::store::{get_store, OnboardingStore, SettingsStore};
 use crate::window::ShowRewindWindow;
 
-/// Hidden Automation Flows demo shortcut (⌃⌥⌘D), registered in every build and
-/// not configurable. It asks the Home window to run the demo installer
-/// (`lib/automation-flows/demo-shortcut.ts`): reset the detected task, then
-/// send « Tâche répétitive détectée ».
+/// Hidden Automation Flows demo shortcut (⌃⌥⌘D), registered only in demo/dev
+/// contexts (`demo_shortcut_allowed`), not configurable. It asks the Home
+/// window to run the demo installer (`lib/automation-flows/demo-shortcut.ts`):
+/// reset the detected task, then send « Tâche répétitive détectée ».
 pub const DEMO_SHORTCUT: &str = "Control+Alt+Super+D";
 /// Keep in sync with `DEMO_SHORTCUT_EVENT` in `lib/automation-flows/demo-shortcut.ts`.
 pub const DEMO_SHORTCUT_EVENT: &str = "shortcut-automation-flows-demo";
+
+/// The demo chord may be registered only in demo/dev contexts: its handler
+/// resets real Flows and installs scripted data into the real catalog. Dev
+/// builds (`debug_assertions`) and an explicit `SCREENPIPE_DEMO_MODE` opt-in
+/// are those contexts; a production build never registers the chord.
+pub fn demo_shortcut_allowed(dev_build: bool, demo_mode: bool) -> bool {
+    dev_build || demo_mode
+}
+
+fn demo_shortcut_enabled() -> bool {
+    demo_shortcut_allowed(
+        cfg!(debug_assertions),
+        std::env::var_os("SCREENPIPE_DEMO_MODE").is_some(),
+    )
+}
 
 /// Only the Home window runs the demo, so one press sends one notification
 /// (every non-overlay webview mounts the listener).
@@ -525,14 +540,16 @@ async fn apply_shortcuts(app: &AppHandle, config: &ShortcutConfig) -> Result<(),
     .await?;
 
     // Not part of the user's shortcut set: a clash with one of them must not
-    // stop the others from registering.
-    if let Err(error) = register_shortcut(app, DEMO_SHORTCUT, false, |app| {
-        info!("demo shortcut triggered");
-        run_demo_shortcut(app);
-    })
-    .await
-    {
-        error!("failed to register the demo shortcut {}: {}", DEMO_SHORTCUT, error);
+    // stop the others from registering. Demo/dev contexts only.
+    if demo_shortcut_enabled() {
+        if let Err(error) = register_shortcut(app, DEMO_SHORTCUT, false, |app| {
+            info!("demo shortcut triggered");
+            run_demo_shortcut(app);
+        })
+        .await
+        {
+            error!("failed to register the demo shortcut {}: {}", DEMO_SHORTCUT, error);
+        }
     }
 
     Ok(())
@@ -637,8 +654,20 @@ pub fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_shortcut, search_transition_succeeded, DEMO_SHORTCUT};
+    use super::{
+        demo_shortcut_allowed, parse_shortcut, search_transition_succeeded, DEMO_SHORTCUT,
+    };
     use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+
+    #[test]
+    fn demo_chord_is_allowed_only_in_demo_or_dev_contexts() {
+        assert!(
+            !demo_shortcut_allowed(false, false),
+            "a production build without the demo opt-in must never register the demo chord"
+        );
+        assert!(demo_shortcut_allowed(true, false));
+        assert!(demo_shortcut_allowed(false, true));
+    }
 
     #[test]
     fn demo_shortcut_is_control_option_command_d() {

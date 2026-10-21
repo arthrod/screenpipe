@@ -1,8 +1,9 @@
 // screenpipe — AI that knows everything you've seen, said, or heard
 // https://screenpipe.com
 
-// Hidden demo shortcut ⌃⌥⌘D (registered globally by the desktop app,
-// src-tauri/src/shortcuts.rs, which emits DEMO_SHORTCUT_EVENT to the Home
+// Hidden demo shortcut ⌃⌥⌘D (registered globally by the desktop app in
+// demo/dev contexts only, src-tauri/src/shortcuts.rs
+// `demo_shortcut_allowed`, which emits DEMO_SHORTCUT_EVENT to the Home
 // window). A full reset on every press: the Flows created from the demo task
 // are deleted (through the engine, like `infra/automation-flows/demo/reset.ts`)
 // while the same demo installer as `infra/automation-flows/demo/demo.ts`

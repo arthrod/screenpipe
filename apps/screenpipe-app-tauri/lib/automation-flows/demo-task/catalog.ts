@@ -29,6 +29,9 @@ export function upsertTask(previous: Catalog | null, task: WorkflowMap, now: str
     revision: (base.revision ?? 0) + 1,
     analyzedAt: base.analyzedAt || now,
     quality: base.quality ?? EMPTY_QUALITY,
-    analysis: { workflows: [installed, ...others].map((workflow, index) => ({ ...workflow, rank: index + 1 })) },
+    // Demo provenance stays segregated: the scripted task installs after the
+    // user's real detections, so `rank` never puts it first for genuine use
+    // (rank is reassigned from array order below).
+    analysis: { workflows: [...others, installed].map((workflow, index) => ({ ...workflow, rank: index + 1 })) },
   };
 }

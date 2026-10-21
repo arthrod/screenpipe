@@ -752,6 +752,7 @@ export function WorkflowDetail({ breadcrumb, relatedWorkflows, openRelated, edit
         <div className={styles.taskHeaderTitle}>
           <button className={styles.backButton} onClick={() => navigate("workflows")}><ArrowLeft size={14} />All workflows</button>
           <strong>{workflow.title}</strong>
+          {workflow.demo && <span className={styles.demoBadge} data-testid="demo-badge" title="Scripted demo task — installed by the demo installer, not detected from your history.">{ui("Demo")}</span>}
         </div>
         {createsFlow && platform.findAutomationFlow && platform.openAutomationFlow && <OpenAutomationButton taskId={workflow.id!} active={active} find={platform.findAutomationFlow} open={platform.openAutomationFlow} />}
       </header>

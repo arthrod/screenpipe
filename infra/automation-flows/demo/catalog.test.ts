@@ -55,9 +55,9 @@ describe("demo catalog", () => {
     expect(created.quality.warnings).toEqual([]);
     const answered = { ...created, analysis: { workflows: [{ ...created.analysis.workflows[0], userCorrection: "answers", revision: 4 }, other] } };
     const reinstalled = upsertTask(answered, task, "2026-10-18T00:00:00Z");
-    expect(reinstalled.analysis.workflows.map(workflow => [workflow.id, workflow.rank])).toEqual([[DEMO_TASK_ID, 1], ["wf-other", 2]]);
-    expect(reinstalled.analysis.workflows[0]).toMatchObject({ userCorrection: null, revision: 5 });
-    expect(reinstalled.analysis.workflows[1].userCorrection).toBe("keep me");
+    expect(reinstalled.analysis.workflows.map(workflow => [workflow.id, workflow.rank])).toEqual([["wf-other", 1], [DEMO_TASK_ID, 2]]);
+    expect(reinstalled.analysis.workflows[1]).toMatchObject({ userCorrection: null, revision: 5 });
+    expect(reinstalled.analysis.workflows[0].userCorrection).toBe("keep me");
     expect(reinstalled.analyzedAt).toBe(now);
   });
 
@@ -66,12 +66,14 @@ describe("demo catalog", () => {
     const answers = writeWorkflowAnswers(null, CLARIFICATION_QUESTIONS.map(question => ({ question, answer: "oui" })));
     const answered: Catalog = { ...installed, analysis: { workflows: installed.analysis.workflows.map(workflow =>
       workflow.id === DEMO_TASK_ID ? { ...workflow, userCorrection: answers } : workflow) } };
-    expect(readWorkflowAnswers(answered.analysis.workflows[0].userCorrection)).toHaveLength(2);
+    const answeredDemo = answered.analysis.workflows.find(workflow => workflow.id === DEMO_TASK_ID)!;
+    expect(readWorkflowAnswers(answeredDemo.userCorrection)).toHaveLength(2);
     const { catalog, changed } = clearAnswers(answered);
     expect(changed).toBe(true);
-    expect(readWorkflowAnswers(catalog.analysis.workflows[0].userCorrection)).toEqual([]);
-    expect(catalog.analysis.workflows[0].revision).toBe(answered.analysis.workflows[0].revision! + 1);
-    expect(catalog.analysis.workflows[1].userCorrection).toBe("keep me");
+    const cleared = catalog.analysis.workflows.find(workflow => workflow.id === DEMO_TASK_ID)!;
+    expect(readWorkflowAnswers(cleared.userCorrection)).toEqual([]);
+    expect(cleared.revision).toBe(answeredDemo.revision! + 1);
+    expect(catalog.analysis.workflows.find(workflow => workflow.id === "wf-other")!.userCorrection).toBe("keep me");
     expect(clearAnswers(catalog).changed).toBe(false);
     expect(() => clearAnswers({ ...catalog, analysis: { workflows: [] } })).toThrow("Run the demo script first");
   });

@@ -302,6 +302,7 @@
 .taskHeader { position: sticky; top: 59px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -12px 0 22px; padding: 10px 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(14px); }
 .taskHeaderTitle { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .taskHeaderTitle strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ink); }
+.demoBadge { flex: 0 0 auto; padding: 2px 8px; border: 1px solid #ead592; border-radius: 999px; background: var(--warm); color: #775b09; font-size: 9px; font-weight: 680; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
 .taskHeader .backButton { flex: 0 0 auto; margin-bottom: 0; }
 .taskHeader .skillButton { flex: 0 0 auto; margin-top: 0; }
 .bigTimeBar { height: 8px; display: flex; overflow: hidden; border-radius: 999px; background: #eceee7; }
@@ -876,6 +877,7 @@
 :global(.dark) .shortcutsButton kbd, :global(.dark) .search kbd { border-color: var(--line); background: var(--soft); color: var(--muted); }
 :global(.dark) .pill { border-color: var(--line); background: var(--soft); color: var(--muted); }
 :global(.dark) .pill_warm { border-color: hsl(45 45% 28%); color: hsl(45 80% 70%); }
+:global(.dark) .demoBadge { border-color: hsl(45 45% 28%); background: hsl(45 45% 14%); color: hsl(45 80% 70%); }
 :global(.dark) .primaryButton:hover { background: hsl(var(--primary-hover)); }
 :global(.dark) .skillButton { border-color: var(--ink); color: var(--ink); }
 :global(.dark) .emptyState { border-color: var(--line); background: var(--panel); }

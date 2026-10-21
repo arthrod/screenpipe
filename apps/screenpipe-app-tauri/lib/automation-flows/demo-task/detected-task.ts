@@ -176,6 +176,10 @@ export function buildDetectedTask(dataUrl: (image: string) => string, now: strin
   const evidence = stages.flatMap(stage => stage.evidence);
   return {
     id: DEMO_TASK_ID,
+    // Explicit provenance: scripted demo data, never a genuine detection.
+    // The Task Page renders it as a badge and the review-notification loop
+    // skips demo-marked entries.
+    demo: true,
     revision: 1,
     rank: 1,
     analysisDays: 90,
@@ -210,7 +214,7 @@ export function buildDetectedTask(dataUrl: (image: string) => string, now: strin
       distinctDays: 1,
       stageEvidenceCoverage: 100,
       repeatedStageCoverage: 100,
-      screenshotCount: -embeddedId,
+      screenshotCount: EVIDENCE_CAPTURES.length,
       stageScreenshotCoverage: 100,
       reasons: ["Three repetitions seen on October 17, 2026"],
     },

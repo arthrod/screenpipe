@@ -2,6 +2,7 @@
 // https://screenpipe.com
 
 import { describe, expect, it, vi } from "vitest";
+import type { WorkflowMap } from "@screenpipe/workflows-ui";
 import { findAutomation, type FindAutomationDeps } from "./find-automation";
 import { upsertTask, type Catalog } from "./demo-task/catalog";
 import { buildDetectedTask, DEMO_TASK_ID, DEMO_TASK_URL, EVIDENCE_CAPTURES } from "./demo-task/detected-task";
@@ -77,9 +78,25 @@ describe("findAutomation (scripted demo detection)", () => {
     await findAutomation(d);
 
     const workflows = saved()!.analysis.workflows;
-    expect(workflows.map(w => w.id)).toEqual([DEMO_TASK_ID, "wf-other"]);
-    expect(workflows[0].userCorrection).toBeNull();
-    expect(workflows[0].revision).toBe(5);
+    expect(workflows.map(w => w.id)).toEqual(["wf-other", DEMO_TASK_ID]);
+    const reinstalled = workflows.find(w => w.id === DEMO_TASK_ID)!;
+    expect(reinstalled.userCorrection).toBeNull();
+    expect(reinstalled.revision).toBe(5);
+  });
+
+  it("installs the task marked as demo, ranked after the user's real detections", async () => {
+    // A genuine detection: no scripted-provenance marker.
+    const real: WorkflowMap = { ...buildDetectedTask(() => "", NOW.toISOString()), id: "wf-real", title: "Real detection" };
+    delete real.demo;
+    const previous = upsertTask(null, real, NOW.toISOString());
+    const { deps: d, saved } = deps({ loadCatalog: vi.fn(async () => previous) });
+    await findAutomation(d);
+
+    const workflows = saved()!.analysis.workflows;
+    expect(workflows.find(w => w.id === DEMO_TASK_ID)?.demo).toBe(true);
+    expect(workflows.find(w => w.id === "wf-real")?.demo).toBeUndefined();
+    // Segregated: the scripted task never takes rank 1 from a real detection.
+    expect(workflows.map(w => [w.id, w.rank])).toEqual([["wf-real", 1], [DEMO_TASK_ID, 2]]);
   });
 
   it("reports the reason when the notification gate does not show the alert", async () => {

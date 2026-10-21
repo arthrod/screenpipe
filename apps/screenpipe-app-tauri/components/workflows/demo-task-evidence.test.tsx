@@ -53,6 +53,18 @@ describe("embedded evidence (scripted Detected Task)", () => {
     }
     for (const question of CLARIFICATION_QUESTIONS) expect(screen.getByRole("textbox", { name: question })).toBeVisible();
   });
+
+  it("labels the scripted task as demo in the Task Page header", async () => {
+    window.history.replaceState(null, "", "/home?mode=workflows");
+    const task = buildDetectedTask(evidence, at);
+    const saved = JSON.parse(serializeWorkflowData(upsertTask(null, task, at)));
+    await act(async () => {
+      render(<WorkflowsApp platform={createFixtureWorkflowsPlatform(saved)} storageKey={null} reviewRequest={{ key: "demo", workflowId: DEMO_TASK_ID }} />);
+    });
+    const badge = await screen.findByTestId("demo-badge");
+    expect(badge).toBeVisible();
+    expect(badge).toHaveTextContent(/demo/i);
+  });
 });
 
 describe("recorded evidence (captures found on this machine)", () => {

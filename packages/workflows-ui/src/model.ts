@@ -180,6 +180,11 @@ export type WorkflowMap = {
   versions?: WorkflowVersion[];
   id?: string;
   revision?: number;
+  /** Scripted-provenance marker: this entry was installed by the demo
+   * installer (`lib/automation-flows/demo-task`), not detected from the
+   * user's history. The Task Page shows it as a badge, the catalog keeps it
+   * ranked after real detections, and the review-notification loop skips it. */
+  demo?: boolean;
   userCorrection?: string | null;
   userEditedAt?: string;
   catalogStatus?: "current" | "not-reobserved";
