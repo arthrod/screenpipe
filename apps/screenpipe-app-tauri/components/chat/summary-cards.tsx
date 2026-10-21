@@ -59,6 +59,11 @@ interface SummaryCardsProps {
   templatePipes?: TemplatePipe[];
   existingPipes?: AutomationPipeInventory[];
   userGoalCategory?: UserGoalCategory;
+  /**
+   * « Create flow »: starts the composer with the `automation-flows` skill
+   * prompt for the user to complete. Unlike the other chips it sends nothing.
+   */
+  onCreateFlow?: () => void;
 }
 
 export interface ConnectionSetupSuggestion {
@@ -175,6 +180,7 @@ export function SummaryCards({
   templatePipes = [],
   existingPipes = [],
   userGoalCategory = DEFAULT_USER_GOAL_CATEGORY,
+  onCreateFlow,
 }: SummaryCardsProps) {
 
   const uiMessages = useMessages();
@@ -394,6 +400,24 @@ export function SummaryCards({
             />
           </div>
         ))}
+        {/* Automation Flow: fills the composer for the user to describe it,
+            so no agent actions and no prompt preview. */}
+        {onCreateFlow && (
+          <div className="relative min-w-[148px] flex-1">
+            <button
+              type="button"
+              data-testid="home-create-flow"
+              onClick={() => {
+                onPreviewPrompt?.(null);
+                posthog.capture("home_card_clicked", { kind: "create_flow" });
+                onCreateFlow();
+              }}
+              className="h-10 w-full cursor-pointer rounded-md border border-foreground/20 bg-card px-2 text-[11px] text-foreground/75 transition-colors duration-150 ease-out hover:border-foreground hover:bg-foreground hover:text-background focus-visible:border-foreground focus-visible:bg-foreground focus-visible:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground focus-visible:ring-offset-1 focus-visible:ring-offset-background motion-reduce:transition-none"
+            >
+              {ui("Create flow")}
+            </button>
+          </div>
+        )}
         {/* User's saved templates — chips slightly fainter than built-ins with
             a pin glyph marking them as user-owned. Full text and management
             (edit/delete) live in the edit dialog. */}
@@ -428,18 +452,22 @@ export function SummaryCards({
         ))}
         {/* An empty slot, not a ready action. Hover inverts like the other
             chips, but the dashes take the background colour: in the fill's
-            colour they vanish and the slot reads as a solid block. */}
-        <button
-          type="button"
-          onClick={() => {
-            posthog.capture("home_card_clicked", { kind: "custom_summary_open" });
-            setShowBuilder(true);
-          }}
-          data-testid="custom-summary-open"
-          className="h-10 min-w-[148px] flex-1 cursor-pointer rounded-md border border-dashed border-foreground/25 px-1 text-[11px] text-muted-foreground transition-colors duration-150 ease-out hover:border-background/50 hover:bg-foreground hover:text-background focus-visible:border-background/50 focus-visible:bg-foreground focus-visible:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground focus-visible:ring-offset-1 focus-visible:ring-offset-background motion-reduce:transition-none"
-        >
-          + Custom
-        </button>
+            colour they vanish and the slot reads as a solid block. Wrapped
+            like the other chips: a bare button's padding and border widen
+            its flex basis, and its row stops lining up with the one above. */}
+        <div className="relative min-w-[148px] flex-1">
+          <button
+            type="button"
+            onClick={() => {
+              posthog.capture("home_card_clicked", { kind: "custom_summary_open" });
+              setShowBuilder(true);
+            }}
+            data-testid="custom-summary-open"
+            className="h-10 w-full cursor-pointer rounded-md border border-dashed border-foreground/25 px-1 text-[11px] text-muted-foreground transition-colors duration-150 ease-out hover:border-background/50 hover:bg-foreground hover:text-background focus-visible:border-background/50 focus-visible:bg-foreground focus-visible:text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground focus-visible:ring-offset-1 focus-visible:ring-offset-background motion-reduce:transition-none"
+          >
+            + Custom
+          </button>
+        </div>
       </div>
 
       {/* Expanded: more templates */}

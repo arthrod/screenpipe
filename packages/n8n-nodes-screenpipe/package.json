@@ -1,0 +1,32 @@
+{
+  "name": "n8n-nodes-screenpipe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "n8n nodes that read the user's ScreenPipe memory (screen, audio, activity), usable as AI Agent tools",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "keywords": ["n8n-community-node-package", "screenpipe"],
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "install-n8n": "bun scripts/build.ts --install",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "files": ["dist"],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": ["dist/credentials/ScreenPipeApi.credentials.js"],
+    "nodes": [
+      "dist/nodes/ScreenPipe/ScreenPipe.node.js",
+      "dist/nodes/ScreenPipeTrigger/ScreenPipeTrigger.node.js",
+      "dist/nodes/ScreenPipeAiTrigger/ScreenPipeAiTrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.13",
+    "n8n-workflow": "2.42.2",
+    "typescript": "5.9.3"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

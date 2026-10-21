@@ -15,6 +15,7 @@
   --chart-secondary: #b8b8b0;
   --heading-font: var(--font-workflow-heading, "Space Grotesk"), Inter, system-ui, sans-serif;
   --warm: #fff1c8;
+  --on-ink: #ffffff; /* text on an --ink fill */
   height: 100vh;
   min-height: 0;
   overflow: hidden;
@@ -91,8 +92,8 @@
 
 .nav button:hover { background: #e8e9e3; color: var(--ink); }
 .nav button > span { margin-left: auto; color: #888b82; font-size: 10px; }
-.nav .navActive { background: var(--ink); color: #fff; box-shadow: none; }
-.nav .navActive > span { color: #fff; }
+.nav .navActive { background: var(--ink); color: var(--on-ink); box-shadow: none; }
+.nav .navActive > span { color: var(--on-ink); }
 
 .sidebarBottom { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
 .shortcutsButton {
@@ -112,7 +113,7 @@
 }
 .shortcutsButton:hover { border-color: #bfc2b8; background: rgba(255,255,255,.78); color: var(--ink); }
 .shortcutsButton span { flex: 1; text-align: left; }
-.shortcutsButton kbd { min-width: 19px; padding: 2px 5px; border: 1px solid #d5d7cf; border-radius: 4px; background: #fff; color: #6f7369; font: 700 8px/1.2 "IBM Plex Mono", monospace; text-align: center; }
+.shortcutsButton kbd { min-width: 19px; padding: 2px 5px; border: 1px solid #d5d7cf; border-radius: 4px; background: var(--panel); color: #6f7369; font: 700 8px/1.2 "IBM Plex Mono", monospace; text-align: center; }
 .workspace {
   container-type: inline-size;
   container-name: workflow-pane;
@@ -136,10 +137,10 @@
 .appEmbedded { grid-template-columns: minmax(0,1fr); min-height: calc(100svh - 56px); }
 .appEmbedded .sidebar { display: none; }
 .appEmbedded .workspace { height: auto; min-height: calc(100svh - 56px); }
-.embeddedNav { min-height: 43px; display: flex; align-items: center; gap: 3px; overflow-x: auto; padding: 5px 28px; border-bottom: 1px solid var(--line); background: #fff; }
+.embeddedNav { min-height: 43px; display: flex; align-items: center; gap: 3px; overflow-x: auto; padding: 5px 28px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .embeddedNav button { height: 31px; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: #686c63; font-size: 9px; font-weight: 650; cursor: pointer; }
 .embeddedNav button:hover { background: #f0f1ec; color: var(--ink); }
-.embeddedNav .embeddedNavActive { background: var(--ink); color: #fff; }
+.embeddedNav .embeddedNavActive { background: var(--ink); color: var(--on-ink); }
 
 .topbar {
   position: sticky;
@@ -166,7 +167,7 @@
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
+  background: var(--panel);
   color: #92958c;
   font-size: 10px;
 }
@@ -255,13 +256,13 @@
 
 @keyframes commandBackdropIn { from { opacity: 0; } }
 @keyframes commandPaletteIn { from { opacity: 0; transform: translateY(-8px) scale(.99); } }
-.scopeControl { height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #72766c; font-size: 8px; white-space: nowrap; }
+.scopeControl { height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: #72766c; font-size: 8px; white-space: nowrap; }
 .scopeControl select { max-width: 150px; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; text-overflow: ellipsis; }
 .scopeControl:focus-within { border-color: #8b9083; outline: 1px solid #8b9083; outline-offset: 1px; }
-.periodControl { height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #72766c; font-size: 8px; white-space: nowrap; }
+.periodControl { height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: #72766c; font-size: 8px; white-space: nowrap; }
 .periodControl select { border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; }
 .periodControl:focus-within { border-color: #8b9083; outline: 1px solid #8b9083; outline-offset: 1px; }
-.profilePeriod { height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #60655a; font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: none; white-space: nowrap; }
+.profilePeriod { height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: #60655a; font-size: 8px; font-weight: 700; letter-spacing: .05em; text-transform: none; white-space: nowrap; }
 .main { max-width: 1420px; min-height: calc(100vh - 59px); margin: 0 auto; padding: 38px clamp(28px, 4vw, 64px) 70px; }
 
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid #dadcd4; border-radius: 999px; background: #f6f6f2; color: #5f6259; font-size: 9px; font-weight: 680; white-space: nowrap; }
@@ -278,7 +279,7 @@
   border: 1px solid var(--ink);
   border-radius: 8px;
   background: var(--ink);
-  color: #fff;
+  color: var(--on-ink);
   font-size: 10px;
   font-weight: 720;
   cursor: pointer;
@@ -297,6 +298,13 @@
 .backButton { display: inline-flex; align-items: center; gap: 6px; padding: 7px; border: 0; background: transparent; color: #60635b; font-size: 10px; font-weight: 650; cursor: pointer; }
 .backButton:hover { color: #111; }
 .backButton { margin-bottom: 22px; padding-left: 0; }
+/* Task Page header: pinned under the topbar while the page scrolls. */
+.taskHeader { position: sticky; top: 59px; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -12px 0 22px; padding: 10px 0; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--paper) 94%, transparent); backdrop-filter: blur(14px); }
+.taskHeaderTitle { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.taskHeaderTitle strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; color: var(--ink); }
+.demoBadge { flex: 0 0 auto; padding: 2px 8px; border: 1px solid #ead592; border-radius: 999px; background: var(--warm); color: #775b09; font-size: 9px; font-weight: 680; letter-spacing: 0.05em; text-transform: uppercase; white-space: nowrap; }
+.taskHeader .backButton { flex: 0 0 auto; margin-bottom: 0; }
+.taskHeader .skillButton { flex: 0 0 auto; margin-top: 0; }
 .bigTimeBar { height: 8px; display: flex; overflow: hidden; border-radius: 999px; background: #eceee7; }
 .bigTimeBar i { height: 100%; background: #272923; }
 .bigTimeBar b { height: 100%; background: var(--chart-secondary); }
@@ -305,7 +313,7 @@
 .emptyMark { width: 49px; height: 49px; display: grid; place-items: center; border-radius: 8px; background: var(--ink); color: var(--paper); }
 .emptyState h2 { margin: 16px 0 7px; color: #292c26; font-size: 18px; }
 .emptyState p { max-width: 560px; margin: 0 0 18px; color: #767a70; font-size: 10px; line-height: 1.6; }
-.processing { padding: 27px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+.processing { padding: 27px; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); }
 .processingHead { display: flex; align-items: center; gap: 14px; padding-bottom: 22px; border-bottom: 1px solid #e6e7e1; }
 .processingHead h2 { margin: 0 0 5px; font-size: 17px; }
 .processingHead p { margin: 0; color: #7b7f74; font-size: 9px; }
@@ -315,7 +323,7 @@
 .errorNotice p { margin: 4px 0 0; font-size: 9px; line-height: 1.45; }
 .errorNotice button { min-height: 31px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; font-size: 8px; font-weight: 700; cursor: pointer; }
 
-.depthNotice { margin: 0 0 18px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas, #f6f6f3); font-size: 12px; line-height: 1.6; }
+.depthNotice { margin: 0 0 18px; padding: 14px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas, var(--paper)); font-size: 12px; line-height: 1.6; }
 .depthNotice p { margin: 6px 0 0; color: #6e7269; }
 .depthNotice ul { margin: 8px 0 0; padding-left: 20px; }
 .pageHeader { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; margin: 25px 0 42px; }
@@ -323,11 +331,11 @@
 .pageHeader p { max-width: 700px; margin: 9px 0 0; color: #6e7269; font-size: 12px; line-height: 1.6; }
 
 .workflowGrid { display: grid; align-items: start; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 13px; }
-.filterBar { min-height: 53px; display: flex; align-items: center; gap: 10px; margin: -22px 0 13px; padding: 9px 10px 9px 15px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.filterBar { min-height: 53px; display: flex; align-items: center; gap: 10px; margin: -22px 0 13px; padding: 9px 10px 9px 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
 .filterBar > div { display: flex; flex-direction: column; gap: 3px; margin-right: auto; }
 .filterBar > div strong { font-size: 10px; }
 .filterBar > div span { color: #898d83; font-size: 8px; }
-.filterButton, .filterButtonActive, .clearButton { min-height: 31px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: #62665d; font-size: 9px; font-weight: 650; cursor: pointer; }
+.filterButton, .filterButtonActive, .clearButton { min-height: 31px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: #62665d; font-size: 9px; font-weight: 650; cursor: pointer; }
 .filterButtonActive { border-color: #b8c58f; background: #f2f7e4; color: #455526; }
 .filterButton svg:last-child, .filterButtonActive svg:last-child { margin-left: 2px; }
 .clearButton { border: 0; color: #81857c; }
@@ -358,7 +366,7 @@
 .workflowActions [data-placement="toolbar"] img { filter: none; }
 .workflowActions [data-placement="toolbar"] button:hover,
 .workflowActions [data-placement="toolbar"] button:focus-visible { background: var(--soft); }
-.skillButton { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; margin-top: 17px; padding: 0 12px; border: 1px solid #20221e; border-radius: 6px; background: #fff; color: #20221e; font-size: 8.5px; font-weight: 750; letter-spacing: .04em; text-transform: none; cursor: pointer; transition: .15s ease; }
+.skillButton { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; margin-top: 17px; padding: 0 12px; border: 1px solid #20221e; border-radius: 6px; background: var(--panel); color: #20221e; font-size: 8.5px; font-weight: 750; letter-spacing: .04em; text-transform: none; cursor: pointer; transition: .15s ease; }
 .skillButton:hover { background: #20221e; color: #fff; }
 /* Respond to the remaining work area, not the full window behind a chat. */
 @container workflow-pane (max-width: 720px) {
@@ -367,7 +375,7 @@
   .dragRegion { display: none; }
   .search { flex: 1; min-width: 0; width: auto; margin: 0; }
 }
-.panel { padding: 21px; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.panel { padding: 21px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
 .panelTitle { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid #e6e7e1; }
 .panelTitle h2 { margin: 0; font-size: 13px; }
 .panelTitle svg { color: #6d725f; }
@@ -389,11 +397,11 @@
 
 .skillBackdrop { position: fixed; z-index: 80; inset: 0; display: flex; justify-content: flex-end; padding: 12px; background: rgba(20,21,18,.25); backdrop-filter: blur(2px); animation: skillFade .15s ease; }
 .skillDialog { width: min(570px,calc(100vw - 24px)); height: calc(100svh - 24px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #20221e; border-radius: 8px; background: #f7f7f3; box-shadow: 0 8px 24px rgba(20,21,18,.16); animation: skillSlide .18s ease; }
-.skillDialogHeader { flex: 0 0 auto; display: grid; grid-template-columns: minmax(0,1fr) 32px; gap: 18px; padding: 22px 22px 19px; border-bottom: 1px solid #d9dbd4; background: #fff; }
+.skillDialogHeader { flex: 0 0 auto; display: grid; grid-template-columns: minmax(0,1fr) 32px; gap: 18px; padding: 22px 22px 19px; border-bottom: 1px solid #d9dbd4; background: var(--panel); }
 .skillDialogHeader span { color: #858980; font-size: 7.5px; font-weight: 750; letter-spacing: .08em; text-transform: none; }
 .skillDialogHeader h2 { margin: 5px 0 6px; font-size: 25px; letter-spacing: -.035em; }
 .skillDialogHeader p { max-width: 570px; margin: 0; color: #74786f; font-size: 9px; line-height: 1.5; }
-.skillDialogHeader > button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #dedfd9; border-radius: 6px; background: #fff; color: #62665e; cursor: pointer; }
+.skillDialogHeader > button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #dedfd9; border-radius: 6px; background: var(--panel); color: #62665e; cursor: pointer; }
 .skillDialogHeader > button:hover { border-color: #20221e; background: #20221e; color: #fff; }
 .skillDialogHeader > button:disabled { opacity: .45; cursor: default; }
 .skillDialogBody { min-height: 0; flex: 1; overflow-y: auto; }
@@ -410,7 +418,7 @@
 .skillSaved p { margin: 0; color: #78786f; font-size: 13px; line-height: 1.5; }
 .skillDestinations { display: flex; flex-wrap: wrap; gap: 8px 14px; list-style: none; margin: -6px 0 0; padding: 0; }
 .skillDestinations li { display: flex; align-items: center; gap: 5px; color: #62665e; font-size: 12px; }
-.skillNextStep { padding: 16px; border: 1px solid #dddfd8; border-radius: 8px; background: #fff; }
+.skillNextStep { padding: 16px; border: 1px solid #dddfd8; border-radius: 8px; background: var(--panel); }
 .skillNextStep > strong { font-size: 13px; }
 .skillNextStep > p { margin-top: 4px; font-size: 12px; }
 .skillNextStep > div { margin: 12px 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; user-select: text; }
@@ -423,7 +431,7 @@
 .skillLocations ul { max-height: 180px; overflow: auto; list-style: none; padding: 0; margin: 0; text-align: left; }
 .skillLocations li { padding: 8px 0; border-bottom: 1px solid #e6e7e1; }
 .skillLocations li > div { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.skillLocations button { min-height: 30px; padding: 3px 7px; border: 1px solid #dddfd8; border-radius: 4px; background: #fff; color: inherit; font-size: 11px; cursor: pointer; }
+.skillLocations button { min-height: 30px; padding: 3px 7px; border: 1px solid #dddfd8; border-radius: 4px; background: var(--panel); color: inherit; font-size: 11px; cursor: pointer; }
 .skillLocations code { display: block; max-width: 100%; margin-top: 5px; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; user-select: text; }
 .skillInstallWarnings summary { color: #815915; }
 .skillInstallWarnings ul { padding-left: 18px; margin: 8px 0 0; line-height: 1.5; }
@@ -435,7 +443,7 @@
 .skillRunStatus > div { display: flex; flex-direction: column; gap: 4px; }
 .skillRunStatus strong { font-size: 11px; }
 .skillRunStatus p { margin: 0; color: #7d8178; font-size: 8px; }
-.skillRunPhases { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 22px 0 15px; border: 1px solid #d8dad3; border-radius: 7px; background: #fff; }
+.skillRunPhases { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 22px 0 15px; border: 1px solid #d8dad3; border-radius: 7px; background: var(--panel); }
 .skillRunPhases > div { min-height: 62px; display: flex; align-items: center; gap: 8px; padding: 10px; border-right: 1px solid #e3e4de; color: #969990; }
 .skillRunPhases > div:last-child { border-right: 0; }
 .skillRunPhases > div > span { width: 22px; height: 22px; display: grid; flex: 0 0 auto; place-items: center; border: 1px solid #d9dbd4; border-radius: 50%; font-size: 8px; }
@@ -443,8 +451,8 @@
 .skillRunPhases .skillRunPhaseActive { color: #252821; }
 .skillRunPhases .skillRunPhaseActive > span { border-color: var(--ink); background: var(--lime); color: var(--ink); box-shadow: 0 0 0 3px rgba(199,255,62,.18); }
 .skillRunPhases .skillRunPhaseDone { color: #5e6358; }
-.skillRunPhases .skillRunPhaseDone > span { border-color: var(--ink); background: var(--ink); color: #fff; }
-.skillLiveDraft { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d8dad3; border-radius: 7px; background: #fff; }
+.skillRunPhases .skillRunPhaseDone > span { border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
+.skillLiveDraft { min-height: 0; flex: 1; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d8dad3; border-radius: 7px; background: var(--panel); }
 .skillLiveDraft > span, .skillReview > div > span { display: block; padding: 10px 12px; border-bottom: 1px solid #e5e6e0; color: #858980; font-size: 7.5px; font-weight: 750; letter-spacing: .08em; text-transform: none; }
 .skillLiveDraft pre, .skillReview pre { min-height: 0; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: #34372f; font: 10px/1.7 system-ui, sans-serif; }
 .skillLiveDraft pre { flex: 1; padding: 16px; }
@@ -454,10 +462,10 @@
 .skillError { display: flex; align-items: flex-start; gap: 7px; margin: 10px 22px 0; padding: 10px 12px; border: 1px solid #d8a894; border-radius: 6px; background: #fff7f3; color: #884c38; font-size: 8px; line-height: 1.45; }
 .skillError svg { flex: 0 0 auto; }
 .skillReview { display: grid; gap: 12px; padding: 12px 22px 0; }
-.skillReview > div { overflow: hidden; border: 1px solid #d8dad3; border-radius: 7px; background: #fff; }
+.skillReview > div { overflow: hidden; border: 1px solid #d8dad3; border-radius: 7px; background: var(--panel); }
 .skillReview p { margin: 0; padding: 13px 14px; color: #363a32; font-size: 9px; line-height: 1.55; }
 .skillReview pre { max-height: 330px; padding: 14px; }
-.skillEdit { margin: 12px 22px 20px; overflow: hidden; border: 1px solid #d8dad3; border-radius: 7px; background: #fff; }
+.skillEdit { margin: 12px 22px 20px; overflow: hidden; border: 1px solid #d8dad3; border-radius: 7px; background: var(--panel); }
 .skillEdit > summary { min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 13px; color: #656a60; font-size: 8.5px; font-weight: 700; cursor: pointer; list-style: none; }
 .skillEdit > summary::-webkit-details-marker { display: none; }
 .skillEdit[open] > summary { border-bottom: 1px solid #e3e4de; }
@@ -465,7 +473,7 @@
 .skillFields { display: flex; flex-direction: column; gap: 13px; padding: 14px; }
 .skillFields label { display: flex; flex-direction: column; gap: 6px; }
 .skillFields label > span { color: #777b72; font-size: 7.5px; font-weight: 750; letter-spacing: .08em; text-transform: none; }
-.skillFields input, .skillFields textarea { width: 100%; padding: 10px 11px; border: 1px solid #d3d5ce; border-radius: 6px; outline: 0; background: #fff; color: #22241f; font: 9px/1.55 IBM Plex Mono, ui-monospace, monospace; }
+.skillFields input, .skillFields textarea { width: 100%; padding: 10px 11px; border: 1px solid #d3d5ce; border-radius: 6px; outline: 0; background: var(--panel); color: #22241f; font: 9px/1.55 IBM Plex Mono, ui-monospace, monospace; }
 .skillFields input { min-height: 39px; }
 .skillFields textarea { resize: vertical; }
 .skillFields input:focus, .skillFields textarea:focus { border-color: #767b70; box-shadow: 0 0 0 2px #e8eae3; }
@@ -478,7 +486,7 @@
 @keyframes skillSlide { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes skillCaret { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
 
-.bottleneckList { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.bottleneckList { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .bottleneckList article { min-height: 126px; display: grid; grid-template-columns: 36px minmax(0,1fr) 150px 28px; gap: 15px; align-items: center; padding: 18px; border-bottom: 1px solid #e6e7e1; }
 .bottleneckList article:last-child { border-bottom: 0; }
 .bottleneckRank { align-self: start; color: #9a9d94; font-size: 9px; }
@@ -494,11 +502,11 @@
 .bottleneckTime { padding-left: 17px; border-left: 1px solid #e5e6e0; }
 .bottleneckTime strong { display: block; margin: 7px 0 4px; font-size: 21px; }
 .bottleneckTime small { color: #898d83; font-size: 8px; }
-.iconLink { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: #565a51; cursor: pointer; }
+.iconLink { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: #565a51; cursor: pointer; }
 .iconLink:hover { background: #f2f3ed; }
 
 .profileSteps { display: grid; gap: 13px; }
-.profileCard { padding: 24px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.profileCard { padding: 24px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .profileCardHead { display: grid; grid-template-columns: 30px minmax(0,1fr); gap: 12px; margin-bottom: 18px; }
 .profileCardHead > span { color: #989c92; font: 9px IBM Plex Mono, ui-monospace, monospace; }
 .profileCardHead h2 { margin: 0; font-size: 15px; }
@@ -507,15 +515,15 @@
 .profileCard > textarea:focus, .profileAdvanced textarea:focus, .profileCard input:focus, .profileCard select:focus { border-color: #8c9183; box-shadow: 0 0 0 2px #ecefe5; }
 .profileKpiHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 2px; }
 .profileKpiHeader > div { display: flex; align-items: center; gap: 7px; font-size: 10px; }
-.profileKpiHeader button { min-height: 31px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid #d6d8d1; border-radius: 6px; background: #fff; color: #565b51; font-size: 9px; font-weight: 680; cursor: pointer; }
-.profileKpiHeader button:hover { border-color: var(--ink); background: var(--ink); color: #fff; }
+.profileKpiHeader button { min-height: 31px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid #d6d8d1; border-radius: 6px; background: var(--panel); color: #565b51; font-size: 9px; font-weight: 680; cursor: pointer; }
+.profileKpiHeader button:hover { border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
 .profileKpiHeader button:disabled { cursor: default; opacity: .45; }
 .profileKpis { display: grid; gap: 8px; margin-top: 12px; }
 .profileKpis fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid #e1e2dc; border-radius: 7px; background: #fafaf7; }
 .profileKpis legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .profileKpiRow { display: grid; grid-template-columns: minmax(180px,1fr) minmax(150px,.65fr) 30px; gap: 9px; align-items: end; }
 .profileKpis label, .profileAdvancedGrid label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: #777b72; font-size: 8px; font-weight: 700; letter-spacing: .04em; }
-.profileKpis input, .profileValueInputs input, .profileValueInputs select { height: 35px; min-width: 0; padding: 0 10px; border: 1px solid #d9dbd4; border-radius: 6px; outline: 0; background: #fff; color: var(--ink); font: 9px IBM Plex Mono, ui-monospace, monospace; }
+.profileKpis input, .profileValueInputs input, .profileValueInputs select { height: 35px; min-width: 0; padding: 0 10px; border: 1px solid #d9dbd4; border-radius: 6px; outline: 0; background: var(--panel); color: var(--ink); font: 9px IBM Plex Mono, ui-monospace, monospace; }
 .profileKpiRow > button { width: 30px; height: 35px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #969991; cursor: pointer; }
 .profileKpiRow > button:hover { background: #f6e9e6; color: #854438; }
 .profileKpis details { margin-top: 9px; border-top: 1px solid #e5e6e0; }
@@ -529,7 +537,7 @@
 .profileValue p { margin: 4px 0 0; color: #83877d; font-size: 8px; line-height: 1.45; }
 .profileValueInputs { display: grid; grid-template-columns: 68px 110px; gap: 7px; }
 .profileValue > small { grid-column: 1 / -1; color: #7a806f; font-size: 8px; }
-.profileAdvanced { margin-top: 13px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.profileAdvanced { margin-top: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .profileAdvanced > summary { min-height: 60px; display: grid; grid-template-columns: 20px minmax(0,1fr) 16px; gap: 9px; align-items: center; padding: 12px 17px; cursor: pointer; list-style: none; }
 .profileAdvanced > summary > div { display: flex; flex-direction: column; gap: 3px; }
 .profileAdvanced > summary strong { font-size: 10px; }
@@ -598,7 +606,7 @@
   .commandBackdrop, .commandPalette { animation: none; }
   .skillBackdrop, .skillDialog, .skillLiveDraft pre i { animation: none; }
 }
-.replay { border: 1px solid var(--line); border-radius: 12px; background: #fff; overflow: hidden; margin: 20px 0; }
+.replay { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; margin: 20px 0; }
 .replay > p { margin: 0; padding: 14px 16px; font-size: 12px; color: #656b60; }
 .replay button { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 32px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: #52584d; cursor: pointer; }
 .replay button:hover:not(:disabled) { background: #f1f2ed; }
@@ -820,6 +828,97 @@
   .sourceTopbar { height: auto; min-height: 59px; flex-wrap: wrap; padding-top: 12px; padding-bottom: 12px; }
   .sourceTopbar .search { flex: 1 1 220px; min-width: 220px; width: auto; margin-right: 0; }
 }
+
+/* Dark theme: the app puts `.dark` on <html>; its tokens replace the light
+   palette, and the few light-only values below follow it. Light is unchanged. */
+:global(.dark) .app {
+  color-scheme: dark;
+  --ink: hsl(var(--foreground));
+  --muted: hsl(var(--muted-foreground));
+  --line: hsl(var(--border));
+  --paper: hsl(var(--background));
+  --panel: hsl(var(--card));
+  --soft: hsl(var(--surface-secondary));
+  --canvas: hsl(var(--surface));
+  --signal: hsl(0 0% 72%);
+  --chart-secondary: hsl(0 0% 40%);
+  --warm: hsl(45 45% 16%);
+  --on-ink: hsl(var(--background));
+}
+:global(.dark) .topbar { background: color-mix(in srgb, var(--paper) 91%, transparent); }
+:global(.dark) .nav button, :global(.dark) .nav button > span, :global(.dark) .embeddedNav button,
+:global(.dark) .search, :global(.dark) .search input::placeholder, :global(.dark) .search > button,
+:global(.dark) .scopeControl, :global(.dark) .periodControl, :global(.dark) .profilePeriod,
+:global(.dark) .backButton, :global(.dark) .sectionHeading > div > span, :global(.dark) .panelTitle > div > span, :global(.dark) .panelTitle svg,
+:global(.dark) .depthNotice p, :global(.dark) .pageHeader p, :global(.dark) .emptyState, :global(.dark) .emptyState p,
+:global(.dark) .plainList li, :global(.dark) .panelEmpty, :global(.dark) .splitLegend > div, :global(.dark) .handoffs strong, :global(.dark) .handoffs span,
+:global(.dark) .bottleneckRank, :global(.dark) .bottleneckMain > div > span, :global(.dark) .bottleneckMain p, :global(.dark) .bottleneckMain .controlReason,
+:global(.dark) .bottleneckEvidence summary, :global(.dark) .bottleneckTime span, :global(.dark) .bottleneckTime small, :global(.dark) .iconLink,
+:global(.dark) .processingHead p, :global(.dark) .replay > p, :global(.dark) .replay button, :global(.dark) .replayCaption > span, :global(.dark) .replayNavigation > span,
+:global(.dark) .contextSaveStatus { color: var(--muted); }
+:global(.dark) .embeddedNav .embeddedNavActive { color: var(--on-ink); }
+/* The backgrounds of the app's other pages: the content on the app canvas,
+   the sidebar in the app's sidebar colour, or see-through to the macOS
+   window effect when the app uses it (`macos-vibrancy` on <html>). The
+   current page is marked as in the app's own sidebar. */
+:global(.dark) .sidebar { background: hsl(var(--sidebar-background)); }
+/* Only the sidebar's column is see-through: the view can be scrolled as a
+   whole (an element scrolled into view), and the canvas must stay under it. */
+:global(html.dark.macos-vibrancy) .app { background: linear-gradient(to right, transparent var(--navigation-width, 240px), var(--paper) 0); }
+:global(html.dark.macos-vibrancy) .app.navigationCollapsed, :global(html.dark.macos-vibrancy) .appEmbedded { background: var(--paper); }
+:global(html.dark.macos-vibrancy) .workspace { background: var(--paper); }
+:global(html.dark.macos-vibrancy) .sidebar { background: rgba(255, 255, 255, .06); border-right-color: hsl(0 0% 100% / .08); }
+:global(.dark) .nav .navActive { background: hsl(var(--foreground) / .06); box-shadow: inset 0 0 0 1px hsl(var(--foreground) / .1); }
+:global(.dark) .nav .navActive, :global(.dark) .nav .navActive > span { color: var(--ink); }
+:global(.dark) .nav button:hover, :global(.dark) .embeddedNav button:hover, :global(.dark) .search > button:hover { background: var(--soft); color: var(--ink); }
+:global(.dark) .backButton:hover, :global(.dark) .emptyState h2, :global(.dark) .splitLegend strong { color: var(--ink); }
+:global(.dark) .shortcutsButton { border-color: var(--line); background: var(--panel); color: var(--muted); }
+:global(.dark) .shortcutsButton:hover { border-color: var(--muted); background: var(--soft); color: var(--ink); }
+:global(.dark) .shortcutsButton kbd, :global(.dark) .search kbd { border-color: var(--line); background: var(--soft); color: var(--muted); }
+:global(.dark) .pill { border-color: var(--line); background: var(--soft); color: var(--muted); }
+:global(.dark) .pill_warm { border-color: hsl(45 45% 28%); color: hsl(45 80% 70%); }
+:global(.dark) .demoBadge { border-color: hsl(45 45% 28%); background: hsl(45 45% 14%); color: hsl(45 80% 70%); }
+:global(.dark) .primaryButton:hover { background: hsl(var(--primary-hover)); }
+:global(.dark) .skillButton { border-color: var(--ink); color: var(--ink); }
+:global(.dark) .emptyState { border-color: var(--line); background: var(--panel); }
+:global(.dark) .errorNotice, :global(.dark) .skillError { border-color: hsl(9 45% 30%); background: hsl(9 45% 10%); color: hsl(9 80% 78%); }
+:global(.dark) .panelTitle, :global(.dark) .plainList li, :global(.dark) .handoffs, :global(.dark) .processingHead,
+:global(.dark) .bottleneckList article, :global(.dark) .bottleneckTime { border-color: var(--line); }
+:global(.dark) .bottleneckEvidence > p { background: var(--soft); color: var(--ink); }
+:global(.dark) .iconLink:hover, :global(.dark) .replay button:hover:not(:disabled) { background: var(--soft); }
+:global(.dark) .bigTimeBar { background: var(--soft); }
+:global(.dark) .bigTimeBar i, :global(.dark) .splitLegend i { background: var(--ink); }
+:global(.dark) .filterButtonActive { border-color: var(--muted); background: var(--soft); color: var(--ink); }
+/* Create skill dialog, opened from the Task Page actions. */
+:global(.dark) .skillBackdrop { background: rgba(0,0,0,.45); }
+:global(.dark) .skillDialog { border-color: var(--line); background: var(--paper); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+:global(.dark) .skillDialogHeader, :global(.dark) .skillDialogFooter { border-color: var(--line); background: var(--panel); }
+:global(.dark) .skillDialogHeader > button { border-color: var(--line); color: var(--muted); }
+:global(.dark) .skillButton:hover, :global(.dark) .skillDialogHeader > button:hover { border-color: var(--ink); background: var(--ink); color: var(--on-ink); }
+:global(.dark) .skillDialogHeader span, :global(.dark) .skillDialogHeader p, :global(.dark) .skillGenerating p, :global(.dark) .skillSaved p,
+:global(.dark) .skillSaved details, :global(.dark) .skillDestinations li, :global(.dark) .skillRunStatus p, :global(.dark) .skillRunPhases > div,
+:global(.dark) .skillLiveDraft > span, :global(.dark) .skillReview > div > span, :global(.dark) .skillEdit > summary, :global(.dark) .skillFields label > span,
+:global(.dark) .skillDialogFooter > button:not(.primaryButton) { color: var(--muted); }
+:global(.dark) .skillRunPhases .skillRunPhaseActive, :global(.dark) .skillRunPhases .skillRunPhaseDone,
+:global(.dark) .skillLiveDraft pre, :global(.dark) .skillReview pre, :global(.dark) .skillReview p, :global(.dark) .skillFields input, :global(.dark) .skillFields textarea { color: var(--ink); }
+:global(.dark) .skillNextStep, :global(.dark) .skillRunPhases, :global(.dark) .skillRunPhases > div, :global(.dark) .skillRunPhases > div > span,
+:global(.dark) .skillLiveDraft, :global(.dark) .skillLiveDraft > span, :global(.dark) .skillReview > div, :global(.dark) .skillReview > div > span,
+:global(.dark) .skillEdit, :global(.dark) .skillEdit[open] > summary, :global(.dark) .skillLocations summary, :global(.dark) .skillLocations li,
+:global(.dark) .skillLocations button, :global(.dark) .skillFields input, :global(.dark) .skillFields textarea { border-color: var(--line); }
+:global(.dark) .skillFields input:focus, :global(.dark) .skillFields textarea:focus { border-color: var(--muted); box-shadow: 0 0 0 2px var(--soft); }
+:global(.dark) .skillEvidenceNote { border-color: var(--line); background: var(--soft); color: var(--muted); }
+/* The command palette mounts outside `.app`: it reads the app tokens directly. */
+:global(.dark) .commandBackdrop { background: rgba(0,0,0,.5); }
+:global(.dark) .commandPalette { border-color: hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--foreground)); box-shadow: 0 22px 70px rgba(0,0,0,.5); }
+:global(.dark) .commandSearch, :global(.dark) .commandFooter { border-color: hsl(var(--border)); color: hsl(var(--muted-foreground)); }
+:global(.dark) .commandFooter { background: hsl(var(--surface-secondary)); }
+:global(.dark) .commandSearch input { color: hsl(var(--foreground)); }
+:global(.dark) .commandSearch input::placeholder, :global(.dark) .commandGroup > span, :global(.dark) .commandRow, :global(.dark) .commandRow small,
+:global(.dark) .commandEmpty, :global(.dark) .commandEmpty span { color: hsl(var(--muted-foreground)); }
+:global(.dark) .commandEmpty strong { color: hsl(var(--foreground)); }
+:global(.dark) .commandSearch kbd, :global(.dark) .commandFooter kbd, :global(.dark) .commandShortcut kbd { border-color: hsl(var(--border)); background: hsl(var(--surface-secondary)); color: hsl(var(--muted-foreground)); }
+:global(.dark) .commandRowActive { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+:global(.dark) .commandRowActive small { color: hsl(var(--muted-foreground)); }
 
 .catalogFilters { display:flex;flex-wrap:wrap;gap:16px;margin:0 0 20px;color:var(--muted);font-size:12px; }
 .catalogFilters select { background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:6px;font:inherit; }

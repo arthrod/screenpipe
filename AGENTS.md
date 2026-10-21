@@ -6,6 +6,16 @@ indexes them locally for AI consumption. It is the context layer for agents.
 This file is loaded into every agent's context. Keep it short; put detail behind
 a pointer.
 
+## Automation Flows
+
+Automation Flows are ScreenPipe automations backed by a self-hosted n8n
+workflow. Before changing `crates/screenpipe-engine/src/automation_flows*`,
+`apps/screenpipe-app-tauri/components/automation-flows/`,
+`apps/screenpipe-app-tauri/lib/automation-flows/`,
+`packages/n8n-nodes-screenpipe/` or `infra/automation-flows/`, read
+`README.md`: its "Design rules" are binding.
+Vocabulary: `CONTEXT.md`. Design history: `docs/automation-flows/history/`.
+
 ## Read on demand
 
 - `docs/VISION.md` — before product, feature, or UX decisions. Stability over

@@ -42,6 +42,19 @@ export type WorkflowsPlatform = {
   questionnaireVoice?: import("./questionnaire-voice").QuestionnaireVoice;
   saveWorkflowAnswers?: (workflow: WorkflowMap, correction: string) => Promise<WorkflowMap>;
   saveWorkflowEdits?: (draft: import("./workflow-edits").WorkflowEdit) => Promise<WorkflowMap>;
+  /** Hosts that can create Automation Flows: create the Flow from this Detected
+   * Task and open its Review Screen. Present only on such hosts; with it, the
+   * Task Page requires every Clarification Question before creation. */
+  createAutomationFlow?: (taskId: string, answers: import("./workflow-answers").WorkflowAnswer[]) => Promise<void>;
+  /** Which Detected Tasks `createAutomationFlow` can turn into a Flow. Any other
+   * task keeps the ordinary Task Page (optional answers, no creation action).
+   * Absent: every task. */
+  canCreateAutomationFlow?: (taskId: string) => boolean;
+  /** The Flow already created from this Detected Task, if it still exists. With
+   * it, the Task Page offers to open the automation instead of creating it. */
+  findAutomationFlow?: (taskId: string) => Promise<string | null>;
+  /** Opens a Flow's Review Screen in Automations → Flows. */
+  openAutomationFlow?: (flowId: string) => Promise<void>;
   modelPreference?: import("./model-choice").WorkflowModelPreference;
   /** The existing scheduled-task runtime owns reconciliation and persistence. */
   managesAnalysis?: boolean;

@@ -2,11 +2,20 @@
 // https://screenpipe.com
 import type { WorkflowScreenshot, WorkflowStage } from "./model";
 
+/** Scripted fixtures carry their own pixels. A negative frameId never names a
+ * recorder frame, so persistence keeps these pixels and nothing resolves them
+ * through the recorder. */
+export function isEmbeddedScreenshot(image: WorkflowScreenshot): boolean {
+  return Number.isSafeInteger(image.frameId) && image.frameId < 0
+    && /^data:image\/(jpeg|png|webp);base64,/.test(image.dataUrl);
+}
+
 // New catalogs store an array; legacy catalogs may still have one image.
 export function stageScreenshots(stage: WorkflowStage): WorkflowScreenshot[] {
   const seen = new Set<number>();
   return [...(stage.screenshots ?? []), ...(stage.screenshot ? [stage.screenshot] : [])]
-    .filter(image => image && Number.isSafeInteger(image.frameId) && image.frameId > 0
+    .filter(image => image && Number.isSafeInteger(image.frameId)
+      && (image.frameId > 0 || isEmbeddedScreenshot(image))
       && !seen.has(image.frameId) && !!seen.add(image.frameId));
 }
 export function verifiedStageScreenshots(stage: WorkflowStage): WorkflowScreenshot[] {

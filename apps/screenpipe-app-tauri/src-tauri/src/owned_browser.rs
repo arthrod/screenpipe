@@ -581,7 +581,17 @@ fn child_webview_builder(
     let builder = tauri::webview::WebviewBuilder::new(label.to_string(), url)
         .initialization_script(transport::BRIDGE_INIT_SCRIPT)
         .background_throttling(BackgroundThrottlingPolicy::Disabled)
-        .on_navigation(move |_url| {
+        .on_navigation(move |url| {
+            // App pages carry the app's Tauri IPC: no page may take the
+            // agent's browser there, not even in a subframe.
+            if is_app_origin(url, tauri::is_dev()) {
+                warn!(
+                    "owned-browser refused a navigation to the app itself: {}://{}",
+                    url.scheme(),
+                    url.host_str().unwrap_or_default()
+                );
+                return false;
+            }
             // Browsers do not put subframe navigations in the omnibox. Wry's
             // `on_navigation` URL can be an iframe target on macOS (wry#1593),
             // so never copy it into the sidebar — only reflect load activity.
@@ -1576,17 +1586,52 @@ fn normalize_url(raw: &str) -> Result<url::Url, String> {
     } else {
         format!("https://{raw}")
     };
-    candidate
+    let url = candidate
         .parse::<url::Url>()
-        .map_err(|e| format!("invalid url: {e}"))
+        .map_err(|e| format!("invalid url: {e}"))?;
+    if is_app_origin(&url, tauri::is_dev()) {
+        return Err(format!(
+            "cannot open {url}: this page is the screenpipe app itself, and the agent \
+             browser never loads app pages. Give the user a screenpipe:// link instead."
+        ));
+    }
+    Ok(url)
+}
+
+/// Port of the dev server that dev builds load the app from (`build.devUrl`
+/// in `tauri.conf.json`).
+const DEV_SERVER_PORT: u16 = 1420;
+
+/// Whether `url` is one of the app's own pages. Those pages get the app's
+/// Tauri IPC, so the agent's browser never loads them: there it could call
+/// app-only commands such as `get_flow_activation_key` or click « Activer »
+/// itself (ticket 20). `dev_build` (`tauri::is_dev()`) adds the dev server.
+fn is_app_origin(url: &url::Url, dev_build: bool) -> bool {
+    match url.scheme() {
+        "tauri" | "ipc" | "asset" => true,
+        // A blob URL carries the origin of the page that created it.
+        "blob" => url
+            .path()
+            .parse::<url::Url>()
+            .is_ok_and(|inner| is_app_origin(&inner, dev_build)),
+        "http" | "https" => {
+            // Windows (WebView2) serves the same protocols as `<name>.localhost`.
+            const APP_HOSTS: [&str; 3] = ["tauri.localhost", "ipc.localhost", "asset.localhost"];
+            const LOOPBACK: [&str; 3] = ["localhost", "127.0.0.1", "[::1]"];
+            let host = url.host_str().unwrap_or_default().trim_end_matches('.');
+            let dev_server = url.port() == Some(DEV_SERVER_PORT) && LOOPBACK.contains(&host);
+            APP_HOSTS.contains(&host) || (dev_build && dev_server)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod normalize_url_tests {
     use super::{
-        browser_tab_state, build_eval_result_script, existing_browser_tab_state, normalize_url,
-        session_host_key, session_prompt_in_flight_timeout_error, session_prompt_timeout_error,
-        OwnedBrowserState,
+        browser_tab_state, build_eval_result_script, existing_browser_tab_state, is_app_origin,
+        normalize_url, session_host_key, session_prompt_in_flight_timeout_error,
+        session_prompt_timeout_error, OwnedBrowserState,
     };
     use std::sync::Arc;
 
@@ -1630,6 +1675,94 @@ mod normalize_url_tests {
     fn preserves_data_url() {
         let u = normalize_url("data:text/plain,hello").unwrap();
         assert_eq!(u.scheme(), "data");
+    }
+
+    #[test]
+    fn the_agent_browser_cannot_open_the_app_itself() {
+        let error = normalize_url("tauri://localhost").unwrap_err();
+        assert!(error.contains("screenpipe app itself"), "{error}");
+    }
+
+    /// Every origin the app serves its own pages (and their Tauri IPC) from:
+    /// `tauri://` on macOS/Linux, `http(s)://tauri.localhost` on Windows,
+    /// the `ipc` and `asset` protocols, and blob URLs those pages create.
+    const APP_PAGES: &[&str] = &[
+        "tauri://localhost",
+        "tauri://localhost/",
+        "TAURI://LOCALHOST/automations?flow=1",
+        "ipc://localhost/get_flow_activation_key",
+        "asset://localhost/Users/me/.screenpipe/data/frame.mp4",
+        "http://tauri.localhost",
+        "https://tauri.localhost/",
+        "HTTPS://Tauri.LocalHost/home",
+        "http://tauri.localhost:8080/",
+        "http://tauri.localhost./",
+        "http://ipc.localhost/plugin%3Aevent%7Clisten",
+        "https://asset.localhost/frame.png",
+        "blob:tauri://localhost/5f3c2a8e-0000-4000-8000-000000000000",
+        "blob:https://tauri.localhost/5f3c2a8e-0000-4000-8000-000000000000",
+    ];
+
+    #[test]
+    fn app_pages_are_refused_when_the_agent_asks_for_them() {
+        for raw in APP_PAGES
+            .iter()
+            .chain(&["tauri.localhost", "//tauri.localhost/"])
+        {
+            let error = normalize_url(raw).expect_err(raw);
+            assert!(error.contains("screenpipe app itself"), "{raw}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_page_cannot_navigate_the_agent_browser_to_the_app() {
+        for raw in APP_PAGES {
+            let url: url::Url = raw.parse().unwrap();
+            assert!(is_app_origin(&url, false), "{raw}");
+            assert!(is_app_origin(&url, true), "{raw}");
+        }
+    }
+
+    #[test]
+    fn dev_builds_also_refuse_the_dev_server() {
+        for raw in [
+            "http://localhost:1420",
+            "http://localhost:1420/",
+            "http://LOCALHOST:1420/home",
+            "http://127.0.0.1:1420/home",
+            "http://[::1]:1420/",
+        ] {
+            let url: url::Url = raw.parse().unwrap();
+            assert!(is_app_origin(&url, true), "{raw}");
+            // Release builds load the app from `tauri://`: a user's own
+            // project served on port 1420 stays reachable there.
+            assert!(!is_app_origin(&url, false), "{raw}");
+        }
+    }
+
+    #[test]
+    fn the_configured_dev_url_is_the_one_refused() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let dev_url: url::Url = config["build"]["devUrl"].as_str().unwrap().parse().unwrap();
+        assert!(is_app_origin(&dev_url, true), "{dev_url}");
+    }
+
+    #[test]
+    fn ordinary_pages_still_open() {
+        for raw in [
+            "https://example.com",
+            "localhost:8080",
+            "http://localhost:3000/",
+            "http://app.localhost:3000/",
+            "https://tauri.localhost.example.com/",
+            "about:blank",
+            "data:text/plain,hello",
+            "blob:https://example.com/5f3c2a8e-0000-4000-8000-000000000000",
+        ] {
+            let url = normalize_url(raw).unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert!(!is_app_origin(&url, true), "{raw}");
+        }
     }
 
     #[test]

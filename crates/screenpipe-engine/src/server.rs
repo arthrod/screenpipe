@@ -318,6 +318,19 @@ pub struct SCServer {
     /// because LAN clients cannot reach those addresses and Windows may show a
     /// firewall prompt for an otherwise local-only CLI run.
     pub advertise_mdns: bool,
+    /// Lets only the desktop UI activate an Automation Flow; `None` (the
+    /// default, e.g. the CLI) refuses every activation. The desktop app sets
+    /// the key it hands to its webview. See `automation_flows::FlowActivationKey`.
+    pub flow_activation_key: Option<crate::automation_flows::FlowActivationKey>,
+    /// How long switching a Flow off waits for an execution n8n is running.
+    pub flow_running_wait: crate::automation_flows::RunningWait,
+    /// Where a failed Flow run is reported (D16): the app's notification
+    /// server, and this API as n8n reaches it.
+    pub flow_failure_reports: crate::automation_flows::FailureReports,
+    /// When the Flow health check (D19) runs: at start, then every 15
+    /// minutes by default. `None` never runs it in the background (tests);
+    /// `POST /automation-flows/health` still checks on demand.
+    pub flow_health_schedule: Option<crate::automation_flows::HealthSchedule>,
 }
 
 fn should_advertise_mdns(addr: SocketAddr) -> bool {
@@ -418,6 +431,10 @@ impl SCServer {
             vision_manager: Arc::new(ArcSwap::from_pointee(None)),
             timeline_disabled: false,
             advertise_mdns: should_advertise_mdns(addr),
+            flow_activation_key: None,
+            flow_running_wait: Default::default(),
+            flow_failure_reports: crate::automation_flows::FailureReports::for_api_port(addr.port()),
+            flow_health_schedule: Some(Default::default()),
         }
     }
 
@@ -1492,6 +1509,21 @@ impl SCServer {
         let router = router.nest(
             "/mcp-servers",
             crate::mcp_servers_api::router(mcp_store, self.mcp_session_access.clone()),
+        );
+
+        // Automation Flows (hackathon): n8n workflows tagged `screenpipe-flow`
+        // plus their local review record. The only code that talks to n8n.
+        let router = router.nest(
+            "/automation-flows",
+            crate::automation_flows::router(
+                self.screenpipe_dir.clone(),
+                self.secret_store.clone(),
+                self.flow_activation_key.clone(),
+                self.workflow_catalog_dir.clone(),
+                self.flow_running_wait,
+                self.flow_failure_reports.clone(),
+                self.flow_health_schedule,
+            ),
         );
 
         // Power management routes (if power manager is available)

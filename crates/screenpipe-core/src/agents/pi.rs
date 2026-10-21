@@ -869,6 +869,12 @@ impl PiExecutor {
                 "render-html-report",
                 include_str!("../../assets/skills/render-html-report/SKILL.md"),
             ),
+            // Chat only (not pipes): read and change the user's Automation
+            // Flows; it never switches one on.
+            (
+                "automation-flows",
+                include_str!("../../assets/skills/automation-flows/SKILL.md"),
+            ),
         ];
 
         // Clean up deprecated skills from the 8→2 consolidation.
@@ -900,6 +906,16 @@ impl PiExecutor {
             std::fs::create_dir_all(&skill_dir)?;
             std::fs::write(&skill_path, content)?;
             debug!("{} skill installed at {:?}", name, skill_path);
+        }
+        // Files a skill links to, written beside its SKILL.md: Pi resolves a
+        // skill's relative links against that folder.
+        let skill_files: &[(&str, &str, &str)] = &[(
+            "automation-flows",
+            "n8n-guide.md",
+            include_str!("../../assets/skills/automation-flows/n8n-guide.md"),
+        )];
+        for (name, file, content) in skill_files {
+            std::fs::write(skills_root.join(name).join(file), content)?;
         }
 
         // Migration cleanup only. Enterprise capabilities are injected by the
@@ -934,13 +950,14 @@ impl PiExecutor {
     /// [`Self::USER_SKILL_MARKER`], be deleted by a later sync. The desktop
     /// importer already rejects these names; this guards any folder that reaches
     /// the store another way.
-    const BASELINE_SKILL_NAMES: [&'static str; 6] = [
+    const BASELINE_SKILL_NAMES: [&'static str; 7] = [
         "screenpipe-api",
         "screenpipe-workflow-maintenance",
         "screenpipe-cli",
         "screenpipe-chats",
         "screenpipe-team",
         "render-html-report",
+        "automation-flows",
     ];
 
     /// Mirror the user's imported skills from the global store
@@ -4964,6 +4981,177 @@ mod tests {
             );
         }
         assert!(PiExecutor::BASELINE_SKILL_NAMES.contains(&"screenpipe-workflow-maintenance"));
+    }
+
+    #[test]
+    fn automation_flows_skill_installs_in_chat_only_and_never_switches_a_flow_on() {
+        let chat = tempfile::tempdir().unwrap();
+        let pipe = tempfile::tempdir().unwrap();
+        PiExecutor::ensure_screenpipe_skill(chat.path()).unwrap();
+        let config: crate::pipes::PipeConfig =
+            serde_yaml::from_str("name: test\npermissions:\n  allow: [Api(GET /search)]\n")
+                .unwrap();
+        PiExecutor::ensure_screenpipe_skill_filtered(pipe.path(), &config).unwrap();
+
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        assert_eq!(
+            std::fs::read_to_string(chat.path().join(".pi/skills/automation-flows/SKILL.md"))
+                .unwrap(),
+            skill
+        );
+        // A background pipe never changes the user's Flows.
+        assert!(!pipe.path().join(".pi/skills/automation-flows").exists());
+        assert!(PiExecutor::BASELINE_SKILL_NAMES.contains(&"automation-flows"));
+
+        // Every request the skill shows reads or updates a Flow; none switches
+        // one on or off.
+        let mut in_code = false;
+        let requests: Vec<&str> = skill
+            .lines()
+            .filter(|line| {
+                if line.trim_start().starts_with("```") {
+                    in_code = !in_code;
+                    return false;
+                }
+                in_code || line.starts_with("| `")
+            })
+            .collect();
+        assert!(requests.iter().any(|line| line.contains("-X PUT")));
+        // Creation (ticket 09) posts the whole workflow to the Flow service,
+        // which imports it switched off.
+        assert!(requests.iter().any(|line| line.contains("-X POST")));
+        assert!(requests
+            .iter()
+            .any(|line| line.starts_with("| `POST /automation-flows` ")));
+        assert!(!skill.contains("Not available yet"));
+        for line in requests {
+            for forbidden in ["activate", "publish", "5678"] {
+                assert!(!line.contains(forbidden), "{forbidden} in {line:?}");
+            }
+        }
+        assert!(skill.contains("**Never activate.**"));
+        assert!(skill.contains("screenpipe://flows/<id>"));
+    }
+
+    #[test]
+    fn automation_flows_skill_looks_a_node_up_before_using_it() {
+        // The chat builds from the nodes this n8n has, not from memory: it
+        // searches, reads the card, and builds only from what they return.
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        assert!(skill.contains("**Look every node up first.**"));
+        assert!(skill.contains("| `GET /automation-flows/nodes?q=<words>` "));
+        assert!(skill.contains("| `GET /automation-flows/nodes/card?type=<type>"));
+        assert!(skill.contains("switchedOff"));
+        assert!(skill.contains("inN8n"));
+    }
+
+    #[test]
+    fn automation_flows_skill_builds_step_by_step_and_deletes_abandoned_drafts() {
+        // flows-round-two 07: a hidden draft, a state read after every step,
+        // « Finish » once nothing is missing, and no draft left behind.
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        for row in [
+            "| `POST /automation-flows/drafts` ",
+            "| `PUT /automation-flows/drafts/<id>` ",
+            "| `GET /automation-flows/drafts/<id>` ",
+            "| `POST /automation-flows/drafts/<id>/finish` ",
+        ] {
+            assert!(skill.contains(row), "{row} missing from the skill");
+        }
+        assert!(skill.contains("## Build a Flow step by step"));
+        assert!(skill.contains("**Delete a draft you abandon**"));
+        assert!(skill.contains("flow_under_construction"));
+    }
+
+    #[test]
+    fn automation_flows_skill_deletes_a_flow_when_asked_without_confirmation() {
+        // flows-round-two story 35: the user decided the chat deletes a Flow
+        // at once when asked; deletion goes through the Flow service only.
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        assert!(skill.contains("| `DELETE /automation-flows/<id>` "));
+        let section = skill
+            .split("## Delete a Flow")
+            .nth(1)
+            .expect("a « Delete a Flow » procedure")
+            .split("\n## ")
+            .next()
+            .unwrap();
+        assert!(section.contains("without asking for confirmation"));
+        assert!(section.contains("-X DELETE"));
+        assert!(section.contains("/automation-flows/<id>"));
+        assert!(
+            !section.contains("5678"),
+            "the chat never calls n8n directly"
+        );
+        assert!(section.contains("flow_running"));
+    }
+
+    #[test]
+    fn automation_flows_guide_ships_beside_the_skill_and_is_linked_from_it() {
+        // Pi resolves a skill's relative links against its folder: the guide
+        // must be written there, in the chat only, and SKILL.md must point at it.
+        let chat = tempfile::tempdir().unwrap();
+        PiExecutor::ensure_screenpipe_skill(chat.path()).unwrap();
+        let guide = include_str!("../../assets/skills/automation-flows/n8n-guide.md");
+        assert_eq!(
+            std::fs::read_to_string(chat.path().join(".pi/skills/automation-flows/n8n-guide.md"))
+                .unwrap(),
+            guide
+        );
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        assert!(skill.contains("(n8n-guide.md)"));
+        for topic in [
+            "$('",
+            "n8n-nodes-base.if",
+            "n8n-nodes-base.switch",
+            "n8n-nodes-base.merge",
+            "onError",
+            "ai_languageModel",
+        ] {
+            assert!(guide.contains(topic), "{topic} missing from the guide");
+        }
+    }
+
+    #[test]
+    fn automation_flows_skill_takes_node_versions_from_the_lookup_only() {
+        // The catalog is the only source of node versions: a version written
+        // in the skill would contradict it after the next n8n image.
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        let mut rest = skill;
+        while let Some(at) = rest.find("typeVersion") {
+            rest = &rest[at + "typeVersion".len()..];
+            let after: String = rest
+                .chars()
+                .skip_while(|c| matches!(c, '`' | '"' | ':' | ' '))
+                .take(1)
+                .collect();
+            assert!(
+                !after.chars().all(|c| c.is_ascii_digit()) || after.is_empty(),
+                "a node version is written in the skill near {:?}",
+                &rest[..rest.len().min(40)]
+            );
+        }
+    }
+
+    #[test]
+    fn automation_flows_skill_names_the_screenpipe_node_types_n8n_loads() {
+        // The local n8n loads the package as custom extensions, so its node
+        // types are `CUSTOM.<name>`; a wrong prefix makes n8n refuse the
+        // workflow the chat builds.
+        let skill = include_str!("../../assets/skills/automation-flows/SKILL.md");
+        let demo = include_str!(
+            "../../../../infra/automation-flows/workflows/novadesk-support-tickets.json"
+        );
+        assert!(demo.contains("\"CUSTOM.screenPipe\""));
+        for node_type in [
+            "CUSTOM.screenPipe`",
+            "CUSTOM.screenPipeTool`",
+            "CUSTOM.screenPipeTrigger`",
+            "CUSTOM.screenPipeAiTrigger`",
+        ] {
+            assert!(skill.contains(node_type), "{node_type} missing from the skill");
+        }
+        assert!(!skill.contains("n8n-nodes-screenpipe.screenPipe"));
     }
 
     #[test]

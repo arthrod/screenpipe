@@ -105,18 +105,21 @@ describe("missing attached screenshots", () => {
 });
 
 describe("step evidence media", () => {
-  it("shows all unique images, selects without resizing and opens the selected frame", async () => {
+  it("offers each unique verified image in the carousel, keeps independent sizing and opens the selected frame", async () => {
     const second = { ...stage.screenshot!, frameId: 9002, timestamp: "2026-09-22T11:02:00Z" };
     const multi = { ...stage, screenshots: [stage.screenshot!, second, second, { ...second, frameId: 9003, visualVerified: false }] };
     const open = vi.fn().mockResolvedValue(undefined);
     render(<WorkflowStepEvidence workflow={workflow} stage={multi} platform={{ openCapturedMoment: open } as unknown as WorkflowsPlatform} />);
-    expect(screen.getAllByRole("img")).toHaveLength(2);
-    expect(screen.getAllByRole("button", { name: /Select screenshot/ })).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: `Select screenshot 1 for ${stage.name}` }));
-    expect(screen.getByRole("button", { name: `Select screenshot 1 for ${stage.name}` })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: `Select screenshot 2 for ${stage.name}` })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByText("1 / 2")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: `Enlarge screenshot 1 for ${stage.name}` }));
+    expect(screen.getByRole("button", { name: `Reduce screenshot 1 for ${stage.name}` })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
+    expect(screen.getByRole("button", { name: `Enlarge screenshot 2 for ${stage.name}` })).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(screen.getByRole("button", { name: `Open recording 2 for ${stage.name}` }));
     await waitFor(() => expect(open).toHaveBeenCalledWith(second.frameId, second.timestamp));
+    fireEvent.click(screen.getByRole("button", { name: `Previous capture for ${stage.name}` }));
+    expect(screen.getByRole("button", { name: `Reduce screenshot 1 for ${stage.name}` })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("plays the selected array-only screenshot instead of the first capture", async () => {
@@ -124,17 +127,32 @@ describe("step evidence media", () => {
     const multi = { ...stage, screenshot: null, screenshots: [stage.screenshot!, second], evidence: [...stage.evidence, { ...stage.evidence[0], timestamp: second.timestamp, app: second.app }] };
     const load = vi.fn().mockResolvedValue(null);
     render(<WorkflowStepEvidence workflow={workflow} stage={multi} platform={{ loadWorkflowRecording: load } as unknown as WorkflowsPlatform} />);
+    fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
     fireEvent.click(screen.getByRole("button", { name: `View recording 2 for ${stage.name}` }));
     await waitFor(() => expect(load).toHaveBeenCalledWith(second.timestamp, second.app));
     expect(await screen.findByRole("img", { name: `Captured moment for ${stage.name}` })).toHaveAttribute("src", second.dataUrl);
   });
 
-  it("shows the verified screenshot large by default without a redundant source list", () => {
+  it("shows the verified screenshot in a compact frame, enlarges it on request, without a redundant source list", () => {
     render(<WorkflowStepEvidence workflow={workflow} stage={stage} platform={{} as WorkflowsPlatform} />);
     expect(screen.getByRole("img", { name: `Captured reference for ${stage.name}` })).toBeVisible();
-    expect(screen.getByRole("button", { name: `Select screenshot for ${stage.name}` })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: `Enlarge screenshot for ${stage.name}` }));
+    expect(screen.getByRole("button", { name: `Reduce screenshot for ${stage.name}` })).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("button", { name: /sources?$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: `Sources for ${stage.name}` })).not.toBeInTheDocument();
+  });
+
+  it("shows embedded fixture images from their own pixels, without recorder lookup or replay", () => {
+    const embedded = { ...stage.screenshot!, frameId: -1, dataUrl: "data:image/webp;base64,AAAA" };
+    const withoutPixels = { ...embedded, frameId: -2, dataUrl: "" };
+    const load = vi.fn();
+    const open = vi.fn();
+    render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [embedded, withoutPixels] }} platform={{ loadWorkflowScreenshot: load, openCapturedMoment: open, loadWorkflowRecording: vi.fn() } as unknown as WorkflowsPlatform} />);
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("img", { name: `Captured reference for ${stage.name}` })).toHaveAttribute("src", embedded.dataUrl);
+    expect(screen.queryByRole("button", { name: /recording/ })).not.toBeInTheDocument();
+    expect(load).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
   });
 
   it("opens verified captures in native Timeline without loading an inline video", async () => {
@@ -203,8 +221,60 @@ describe("step evidence media", () => {
 });
 
 
+describe("evidence carousel", () => {
+  const embedded = (frameId: number, app: string, timestamp: string) => ({ ...stage.screenshot!, frameId, app, timestamp, dataUrl: `data:image/webp;base64,${-frameId}` });
+  const captures = [embedded(-1, "Gmail", "2026-10-17T02:05:41Z"), embedded(-2, "Jira", "2026-10-17T02:06:10Z"), embedded(-3, "Jira", "2026-10-17T02:07:00Z")];
+  const shown = (timestamp: string) => new Date(timestamp).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const carousel = () => <WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: captures }} platform={{} as WorkflowsPlatform} />;
+
+  it("shows one capture at a time with its caption and position, and moves with previous and next", () => {
+    render(carousel());
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByRole("img")).toHaveAttribute("src", captures[0].dataUrl);
+    expect(screen.getByText("1 / 3")).toBeVisible();
+    expect(screen.getByText(`Gmail · ${shown(captures[0].timestamp)}`)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
+    expect(screen.getByRole("img")).toHaveAttribute("src", captures[1].dataUrl);
+    expect(screen.getByText("2 / 3")).toBeVisible();
+    expect(screen.getByText(`Jira · ${shown(captures[1].timestamp)}`)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: `Previous capture for ${stage.name}` }));
+    expect(screen.getByRole("img")).toHaveAttribute("src", captures[0].dataUrl);
+  });
+
+  it("moves with the arrow keys while focused, and wraps around at both ends", () => {
+    render(carousel());
+    const group = screen.getByRole("group", { name: `Captures for ${stage.name}` });
+    group.focus();
+    expect(group).toHaveFocus();
+    fireEvent.keyDown(group, { key: "ArrowLeft" });
+    expect(screen.getByText("3 / 3")).toBeVisible();
+    fireEvent.keyDown(group, { key: "ArrowRight" });
+    expect(screen.getByText("1 / 3")).toBeVisible();
+    fireEvent.keyDown(screen.getByRole("button", { name: `Next capture for ${stage.name}` }), { key: "ArrowRight" });
+    expect(screen.getByRole("img")).toHaveAttribute("src", captures[1].dataUrl);
+  });
+
+  it("keeps keyboard focus on the control that changed the capture", () => {
+    render(carousel());
+    const next = screen.getByRole("button", { name: `Next capture for ${stage.name}` });
+    next.focus();
+    fireEvent.click(next);
+    expect(screen.getByText("2 / 3")).toBeVisible();
+    expect(screen.getByRole("button", { name: `Next capture for ${stage.name}` })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+    expect(screen.getByText("3 / 3")).toBeVisible();
+  });
+
+  it("shows a single capture without carousel controls", () => {
+    render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [captures[0]] }} platform={{} as WorkflowsPlatform} />);
+    expect(screen.getByRole("img")).toHaveAttribute("src", captures[0].dataUrl);
+    expect(screen.queryByRole("button", { name: /capture for/ })).toBeNull();
+    expect(screen.queryByText("1 / 1")).toBeNull();
+  });
+});
+
 describe("recorder references", () => {
-  it("loads each reference only while visible and releases its image off screen", async () => {
+  it("loads only the shown reference while visible and releases its image when it leaves", async () => {
     const observers = new Map<Element, (entries: { isIntersecting: boolean }[]) => void>();
     vi.stubGlobal("IntersectionObserver", class {
       callback: (entries: { isIntersecting: boolean }[]) => void;
@@ -219,6 +289,67 @@ describe("recorder references", () => {
     const load = vi.fn().mockImplementation(async (_timestamp, _app, _signal, id) => ({ ...(id === first.frameId ? first : second), dataUrl: `blob:${id}` }));
     try {
       const { container } = render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} />);
+      const figure = () => container.querySelector("figure")!;
+      expect(container.querySelectorAll("figure")).toHaveLength(1);
+      expect(load).not.toHaveBeenCalled();
+      act(() => observers.get(figure())!([{ isIntersecting: true }]));
+      await screen.findByRole("img");
+      expect(load).toHaveBeenCalledTimes(1);
+      act(() => observers.get(figure())!([{ isIntersecting: false }]));
+      await waitFor(() => expect(revoke).toHaveBeenCalledWith(`blob:${first.frameId}`));
+      expect(load.mock.calls[0][2].aborted).toBe(true);
+      expect(screen.queryByRole("img")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
+      expect(load).toHaveBeenCalledTimes(1);
+      act(() => observers.get(figure())!([{ isIntersecting: true }]));
+      expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:9002");
+      expect(load).toHaveBeenCalledTimes(2);
+      fireEvent.click(screen.getByRole("button", { name: `Previous capture for ${stage.name}` }));
+      await waitFor(() => expect(revoke).toHaveBeenCalledWith("blob:9002"));
+    } finally { cleanup(); vi.unstubAllGlobals(); }
+  });
+
+  it("lets the reader move past an expired capture to another one", async () => {
+    const first = { ...stage.screenshot!, dataUrl: "" };
+    const second = { ...first, frameId: 9002 };
+    const load = vi.fn().mockImplementation(async (_timestamp, _app, _signal, id) => id === first.frameId ? null : { ...second, dataUrl: "blob:available" });
+    render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} />);
+    expect(await screen.findByText("This screenshot is no longer available.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: `Next capture for ${stage.name}` }));
+    expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:available");
+  });
+});
+
+describe("authored image list (editor)", () => {
+  it("shows all unique images, selects without resizing and opens the selected frame", async () => {
+    const second = { ...stage.screenshot!, frameId: 9002, timestamp: "2026-09-22T11:02:00Z" };
+    const multi = { ...stage, screenshots: [stage.screenshot!, second, second, { ...second, frameId: 9003, visualVerified: false }] };
+    const open = vi.fn().mockResolvedValue(undefined);
+    render(<WorkflowStepEvidence workflow={workflow} stage={multi} platform={{ openCapturedMoment: open } as unknown as WorkflowsPlatform} onImageLayoutChange={vi.fn()} />);
+    expect(screen.getAllByRole("img")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /Select screenshot/ })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: `Select screenshot 1 for ${stage.name}` }));
+    expect(screen.getByRole("button", { name: `Select screenshot 1 for ${stage.name}` })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: `Select screenshot 2 for ${stage.name}` })).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByRole("button", { name: `Open recording 2 for ${stage.name}` }));
+    await waitFor(() => expect(open).toHaveBeenCalledWith(second.frameId, second.timestamp));
+  });
+
+  it("loads each reference only while visible and releases its image off screen", async () => {
+    const observers = new Map<Element, (entries: { isIntersecting: boolean }[]) => void>();
+    vi.stubGlobal("IntersectionObserver", class {
+      callback: (entries: { isIntersecting: boolean }[]) => void;
+      constructor(callback: (entries: { isIntersecting: boolean }[]) => void) { this.callback = callback; }
+      observe(element: Element) { observers.set(element, this.callback); }
+      disconnect() {}
+    });
+    const revoke = vi.fn();
+    Object.defineProperty(URL, "revokeObjectURL", { value: revoke, configurable: true });
+    const first = { ...stage.screenshot!, dataUrl: "" };
+    const second = { ...first, frameId: 9002, timestamp: "2026-09-22T11:02:00Z" };
+    const load = vi.fn().mockImplementation(async (_timestamp, _app, _signal, id) => ({ ...(id === first.frameId ? first : second), dataUrl: `blob:${id}` }));
+    try {
+      const { container } = render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} onImageLayoutChange={vi.fn()} />);
       const figures = container.querySelectorAll("figure");
       expect(load).not.toHaveBeenCalled();
       act(() => observers.get(figures[0])!([{ isIntersecting: true }]));
@@ -238,7 +369,7 @@ describe("recorder references", () => {
     const first = { ...stage.screenshot!, dataUrl: "" };
     const second = { ...first, frameId: 9002 };
     const load = vi.fn().mockImplementation(async (_timestamp, _app, _signal, id) => id === first.frameId ? null : { ...second, dataUrl: "blob:available" });
-    render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} />);
+    render(<WorkflowStepEvidence workflow={workflow} stage={{ ...stage, screenshot: null, screenshots: [first, second] }} platform={{ loadWorkflowScreenshot: load } as unknown as WorkflowsPlatform} onImageLayoutChange={vi.fn()} />);
     expect(await screen.findByText("This screenshot is no longer available.")).toBeVisible();
     expect(await screen.findByRole("img")).toHaveAttribute("src", "blob:available");
   });

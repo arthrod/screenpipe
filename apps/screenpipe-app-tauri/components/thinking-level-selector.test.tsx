@@ -224,6 +224,6 @@ describe("thinking level", () => {
     fireEvent.keyDown(slider, { key: "Home" });
     expect(slider).not.toHaveAttribute("aria-disabled");
     fireEvent.keyDown(slider, { key: "End" });
-    expect(screen.getByTestId("thinking-level-slider-value")).toHaveTextContent("High");
+    expect(screen.getByTestId("thinking-level-slider-value")).toHaveTextContent("Max");
   });
 });

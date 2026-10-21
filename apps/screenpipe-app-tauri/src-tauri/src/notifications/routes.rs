@@ -15,6 +15,34 @@ use tauri::AppHandle;
 use tauri::{Emitter, Manager};
 use tracing::{debug, error, info};
 
+/// The machine-readable outcomes `POST /notify` answers carry in their
+/// `outcome` field, naming what happened to the alert. The engine's
+/// Flow-failure reporting classifies on this field — never on the English
+/// `message` copy, which stays for logs and for callers running against
+/// older servers. The pairs are pinned by the tests below and by the
+/// engine's classification tests; the engine also pins the copy as its
+/// fallback for app builds predating this field.
+mod outcome {
+    pub const SHOWN: &str = "shown";
+    pub const DUPLICATE: &str = "duplicate";
+    /// Quiet hours, snooze, or master off — suppression that lifts.
+    pub const PAUSED: &str = "paused";
+    pub const PIPE_DISABLED: &str = "pipe_disabled";
+    pub const MUTED: &str = "muted";
+    pub const WORKFLOW_SUPPRESSED: &str = "workflow_suppressed";
+    pub const ALREADY_VIEWING: &str = "already_viewing";
+}
+
+/// Every successful `/notify` answer: the English `message` (logs, older
+/// callers) plus the machine-readable `outcome`.
+fn notify_answer(message: &str, outcome: &str) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "success": true,
+        "message": message,
+        "outcome": outcome,
+    }))
+}
+
 /// Read `notificationPrefs.pipeNotifications` from the settings store.
 /// Default `true` (matches the frontend default). Missing store / parse
 /// failure also defaults to `true` — we'd rather show one extra toast
@@ -151,7 +179,7 @@ pub async fn send_notification(
     State(state): State<ServerState>,
     headers: HeaderMap,
     Json(mut payload): Json<NotifyPayload>,
-) -> Result<Json<ApiResponse>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     // Never log captured titles, bodies or action prompts.
     let initial_source = resolve_notification_source_metadata(&payload, &headers, "pending");
     let workflow_request = super::workflow::is_workflow_pipe(initial_source.pipe_name.as_deref());
@@ -201,10 +229,10 @@ pub async fn send_notification(
                 reason,
                 candidates.len(),
             );
-            return Ok(Json(ApiResponse {
-                success: true,
-                message: format!("workflow notification suppressed: {reason}"),
-            }));
+            return Ok(notify_answer(
+                &format!("workflow notification suppressed: {reason}"),
+                outcome::WORKFLOW_SUPPRESSED,
+            ));
         }
         super::workflow::track(
             &state.app_handle,
@@ -229,10 +257,10 @@ pub async fn send_notification(
                 "already_viewing",
                 candidates.len(),
             );
-            return Ok(Json(ApiResponse {
-                success: true,
-                message: "already viewing workflows".into(),
-            }));
+            return Ok(notify_answer(
+                "already viewing workflows",
+                outcome::ALREADY_VIEWING,
+            ));
         }
         next.last_accepted_at = Some(now);
         payload.pipe_name = initial_source.pipe_name;
@@ -259,10 +287,7 @@ pub async fn send_notification(
                     "notify: announcement pushed (surface={:?})",
                     payload.surface
                 );
-                Ok(Json(ApiResponse {
-                    success: true,
-                    message: "announcement sent".to_string(),
-                }))
+                Ok(notify_answer("announcement sent", outcome::SHOWN))
             }
             Err(e) => {
                 error!("notify: failed to emit announcement: {}", e);
@@ -311,10 +336,7 @@ pub async fn send_notification(
                 0,
             );
         }
-        return Ok(Json(ApiResponse {
-            success: true,
-            message: "notifications paused".to_string(),
-        }));
+        return Ok(notify_answer("notifications paused", outcome::PAUSED));
     }
 
     // Repeat gate: the same alert, again, inside its cooldown. A
@@ -340,10 +362,10 @@ pub async fn send_notification(
                 0,
             );
         }
-        return Ok(Json(ApiResponse {
-            success: true,
-            message: "duplicate notification suppressed".to_string(),
-        }));
+        return Ok(notify_answer(
+            "duplicate notification suppressed",
+            outcome::DUPLICATE,
+        ));
     }
 
     // Gate pipe-typed alerts behind the `Pipe notifications` toggle.
@@ -362,10 +384,10 @@ pub async fn send_notification(
                 0,
             );
         }
-        return Ok(Json(ApiResponse {
-            success: true,
-            message: "pipe notifications disabled".to_string(),
-        }));
+        return Ok(notify_answer(
+            "pipe notifications disabled",
+            outcome::PIPE_DISABLED,
+        ));
     }
 
     // Per-pipe mute: a pipe the user silenced individually in Settings. Applies
@@ -383,10 +405,10 @@ pub async fn send_notification(
                     0,
                 );
             }
-            return Ok(Json(ApiResponse {
-                success: true,
-                message: "pipe notifications disabled".to_string(),
-            }));
+            return Ok(notify_answer(
+                "pipe notifications disabled",
+                outcome::PIPE_DISABLED,
+            ));
         }
 
         if pipe_muted(&state.app_handle, name) {
@@ -399,10 +421,7 @@ pub async fn send_notification(
                     0,
                 );
             }
-            return Ok(Json(ApiResponse {
-                success: true,
-                message: "pipe muted".to_string(),
-            }));
+            return Ok(notify_answer("pipe muted", outcome::MUTED));
         }
     }
 
@@ -487,10 +506,10 @@ pub async fn send_notification(
         })?;
         if !inserted {
             debug!(id = %panel_id, "notify: duplicate delivery already persisted");
-            return Ok(Json(ApiResponse {
-                success: true,
-                message: "Notification already sent".to_string(),
-            }));
+            return Ok(notify_answer(
+                "Notification already sent",
+                outcome::DUPLICATE,
+            ));
         }
         emit_notification_source_marker(
             &state.app_handle,
@@ -597,10 +616,10 @@ pub async fn send_notification(
         }
     });
 
-    Ok(Json(ApiResponse {
-        success: true,
-        message: "Notification sent successfully".to_string(),
-    }))
+    Ok(notify_answer(
+        "Notification sent successfully",
+        outcome::SHOWN,
+    ))
 }
 
 /// Whether this alert is toast-only. An explicit `transient` in the payload
@@ -922,6 +941,35 @@ mod tests {
     fn gate_respects_explicit_true() {
         let extra = extra_with(json!({ "pipeNotifications": true }));
         assert!(pipe_notifications_enabled_from_extra(&extra));
+    }
+
+    #[test]
+    fn notify_answers_name_their_delivery_outcome() {
+        // The engine's Flow-failure reporting classifies `/notify` answers
+        // on the machine-readable `outcome` (the English `message` is the
+        // pinned fallback for older servers — the engine's classification
+        // tests pin the same copy). Every pair this route can answer:
+        let pairs = [
+            ("Notification sent successfully", outcome::SHOWN),
+            ("notifications paused", outcome::PAUSED),
+            ("duplicate notification suppressed", outcome::DUPLICATE),
+            ("Notification already sent", outcome::DUPLICATE),
+            ("pipe notifications disabled", outcome::PIPE_DISABLED),
+            ("pipe muted", outcome::MUTED),
+            ("announcement sent", outcome::SHOWN),
+            (
+                "workflow notification suppressed: daily allowance",
+                outcome::WORKFLOW_SUPPRESSED,
+            ),
+            ("already viewing workflows", outcome::ALREADY_VIEWING),
+        ];
+        for (message, expected) in pairs {
+            assert_eq!(
+                notify_answer(message, expected).0,
+                json!({"success": true, "message": message, "outcome": expected}),
+                "{message}"
+            );
+        }
     }
 
     #[test]

@@ -748,6 +748,13 @@ async getEnterpriseTeamApiToken() : Promise<string | null> {
 async getEnv(name: string) : Promise<string> {
     return await TAURI_INVOKE("get_env", { name });
 },
+/**
+ * Hands the Flow activation credential to the webview, for the Review
+ * Screen's "Activer" click (`components/automation-flows/api.ts`).
+ */
+async getFlowActivationKey() : Promise<string> {
+    return await TAURI_INVOKE("get_flow_activation_key");
+},
 async getHardwareCapability() : Promise<HardwareCapability> {
     return await TAURI_INVOKE("get_hardware_capability");
 },

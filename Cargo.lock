@@ -8972,6 +8972,7 @@ dependencies = [
  "dirs 6.0.0",
  "env_logger",
  "fastrand",
+ "flate2",
  "futures",
  "hostname",
  "http-body-util",

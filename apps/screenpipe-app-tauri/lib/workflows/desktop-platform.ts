@@ -32,6 +32,8 @@ import {
 
 import { ensureWorkflowTask, startWorkflowJob, getWorkflowJob, latestWorkflowJob, stopWorkflowJob, loadScheduledCatalog, saveWorkflowCorrections, saveWorkflowEdits, saveWorkflowAnswers } from "./scheduled-discovery";
 import { loadWorkflowScreenshot } from "./source-screenshot";
+import { canCreateAutomationFlow, createAutomationFlow, findAutomationFlow, openAutomationFlow } from "./automation-flows";
+import { openTimelineMoment } from "./timeline";
 
 const WORK_PROFILE_KEY = "screenpipe-workflows:work-profile:v1";
 const BROWSER_ANALYSIS_KEY = "screenpipe-workflows:last-analysis-v2";
@@ -142,14 +144,12 @@ export const desktopWorkflowsPlatform: WorkflowsPlatform = {
   } } : {}),
   ...(!browserPreview ? {
     releaseWorkflowRecording: (url: string) => invoke<void>("release_workflow_recording", { url }),
+    // Workflows runs inside Screenpipe. Use the same native Timeline handoff
+    // as Search instead of reopening an installed app through an OS deep link.
     openCapturedMoment: async (frameId: number, timestamp: string) => {
-      if (!Number.isSafeInteger(frameId) || frameId <= 0 || !Number.isFinite(Date.parse(timestamp))) {
-        throw new Error("Invalid captured moment");
-      }
-      // Workflows runs inside Screenpipe. Use the same native Timeline handoff
-      // as Search instead of reopening an installed app through an OS deep link.
-      const result = await commands.searchNavigateToTimeline(timestamp, frameId, null, null, null, null);
-      if (result.status === "error") throw new Error(result.error);
+      // Evidence always names a recorder frame (no timestamp-only moment).
+      if (!Number.isSafeInteger(frameId) || frameId <= 0) throw new Error("Invalid captured moment");
+      await openTimelineMoment(frameId, timestamp);
     },
   } : {}),
   ...(!browserPreview ? { assistant: desktopAssistant } : {}),
@@ -160,6 +160,10 @@ export const desktopWorkflowsPlatform: WorkflowsPlatform = {
   analyzeCapturedWork: (days, options) => analyzeCapturedWork(days, options?.workProfile),
   loadCapturedWork: (_days, options) => browserPreview ? loadSavedAnalysis() : loadScheduledCatalog(options?.signal),
   saveCapturedWork: (analysis) => browserPreview ? saveAnalysis(analysis) : saveWorkflowCorrections(analysis),
+  createAutomationFlow,
+  canCreateAutomationFlow,
+  findAutomationFlow,
+  openAutomationFlow,
   ...(!browserPreview ? { saveWorkflowEdits, saveWorkflowAnswers, questionnaireVoice: desktopQuestionnaireVoice, managesAnalysis: true, ensureAnalysisTask: ensureWorkflowTask,
     startAnalysisJob: startWorkflowJob, getAnalysisJob: getWorkflowJob,
     getLatestAnalysisJob: latestWorkflowJob, cancelAnalysisJob: stopWorkflowJob,

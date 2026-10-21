@@ -1694,7 +1694,7 @@ struct ResolvedPresetChoice {
 ///
 /// Primary source: secrets store (`oauth:chatgpt` key in encrypted SQLite DB).
 /// Fallback: legacy `chatgpt-oauth.json` file for pre-migration installs.
-fn read_chatgpt_oauth_token() -> Option<String> {
+pub fn read_chatgpt_oauth_token() -> Option<String> {
     // Try secrets store first (current path)
     #[cfg(feature = "secrets")]
     {

@@ -244,4 +244,51 @@ describe("connection credential forms", () => {
     const connect = await screen.findByRole("button", { name: /^connect$/i });
     expect((connect as HTMLButtonElement).disabled).toBe(true);
   });
+
+  /// n8n (crates/screenpipe-connect/src/connections/n8n.rs): the API URL and
+  /// API key used by Automation Flows sit next to the webhook, all optional,
+  /// and the key is typed into a masked field.
+  it("shows the n8n API URL and masked API key, connectable without a webhook", async () => {
+    mocks.localFetch.mockImplementation((url: string) => {
+      if (url.endsWith("/instances")) return jsonResponse({ instances: [] });
+      return jsonResponse({ connected: false, credentials: {} });
+    });
+
+    render(
+      <ApiIntegrationPanel
+        integration={{
+          ...optionalOnlyIntegration,
+          id: "n8n",
+          name: "n8n",
+          fields: [
+            { key: "webhook_url", label: "Webhook URL (optional)", secret: true, placeholder: "https://your-n8n.example.com/webhook/...", help_url: "" },
+            { key: "api_url", label: "API URL (optional, for Automation Flows)", secret: false, placeholder: "http://localhost:5678", help_url: "" },
+            { key: "api_key", label: "API key (optional, for Automation Flows)", secret: true, placeholder: "n8n API key", help_url: "" },
+          ],
+        }}
+        onRefresh={vi.fn()}
+      />
+    );
+
+    const apiUrl = await screen.findByPlaceholderText("http://localhost:5678");
+    const apiKey = screen.getByPlaceholderText("n8n API key");
+    expect(screen.getByText("API URL (optional, for Automation Flows)")).toBeTruthy();
+    expect(screen.getByText("API key (optional, for Automation Flows)")).toBeTruthy();
+    expect((apiKey as HTMLInputElement).type).toBe("password");
+    expect((apiUrl as HTMLInputElement).type).toBe("text");
+
+    fireEvent.change(apiUrl, { target: { value: "http://localhost:5678" } });
+    fireEvent.change(apiKey, { target: { value: "n8n-test-key" } });
+    fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+
+    await waitFor(() => {
+      const put = mocks.localFetch.mock.calls.find(
+        ([, init]) => (init as RequestInit | undefined)?.method === "PUT"
+      );
+      expect(put?.[0]).toBe("/connections/n8n");
+      expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({
+        credentials: { webhook_url: "", api_url: "http://localhost:5678", api_key: "n8n-test-key" },
+      });
+    });
+  });
 });

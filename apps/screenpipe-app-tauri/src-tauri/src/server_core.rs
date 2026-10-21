@@ -662,6 +662,9 @@ impl ServerCore {
             config.video_quality.clone(),
         );
         server.workflow_catalog_dir = workflow_catalog_dir;
+        // Only the Review Screen holds this key (Tauri command), so the chat
+        // agent and pipes cannot activate an Automation Flow.
+        server.flow_activation_key = Some(crate::automation_flows::activation_key());
         server.vision_metrics = vision_metrics.clone();
         server.audio_metrics = audio_manager.metrics.clone();
         server.hot_frame_cache = Some(hot_frame_cache.clone());

@@ -736,6 +736,9 @@ export function WorkflowDetail({ breadcrumb, relatedWorkflows, openRelated, edit
   const actionableFriction = workflow.bottlenecks.filter(isActionableBottleneck);
   const constraints = workflow.bottlenecks.filter((item) => !isActionableBottleneck(item));
   const agentActions = workflowAgentActions?.(workflow);
+  // The host can turn this task into an Automation Flow: required answers, worded buttons.
+  const createsFlow = !!(platform.createAutomationFlow && workflow.id && (platform.canCreateAutomationFlow?.(workflow.id) ?? true));
+  const timelineLabel = createsFlow ? "View in timeline" : undefined;
   const workflowActions = <div className={styles.workflowActions}>{agentActions}{onShareWorkflow && <button className={styles.skillButton} type="button" onClick={() => onShareWorkflow(workflow)}><Share2 size={14} />Share</button>}</div>;
   const secondaryActions: WorkflowSecondaryAction[] = [
     ...(platform.guides ? [{ label: hasGuide ? ui("Open SOP") : ui("Create SOP"), icon: BookOpen, shortcut: "P", onSelect: () => setGuideOpen(true) }] : []),
@@ -743,10 +746,22 @@ export function WorkflowDetail({ breadcrumb, relatedWorkflows, openRelated, edit
   ];
   return (
     <>
-      <button className={styles.backButton} onClick={() => navigate("workflows")}><ArrowLeft size={14} />All workflows</button>
+      {/* Pinned while scrolling, like the Flow page header, so "Open
+          automation" stays in reach. */}
+      <header className={styles.taskHeader} data-testid="task-header">
+        <div className={styles.taskHeaderTitle}>
+          <button className={styles.backButton} onClick={() => navigate("workflows")}><ArrowLeft size={14} />All workflows</button>
+          <strong>{workflow.title}</strong>
+          {workflow.demo && <span className={styles.demoBadge} data-testid="demo-badge" title="Scripted demo task — installed by the demo installer, not detected from your history.">{ui("Demo")}</span>}
+        </div>
+        {createsFlow && platform.findAutomationFlow && platform.openAutomationFlow && <OpenAutomationButton taskId={workflow.id!} active={active} find={platform.findAutomationFlow} open={platform.openAutomationFlow} />}
+      </header>
       {breadcrumb}
-      {saveEdits ? <WorkflowEditor {...editorOptions} relatedWorkflows={relatedWorkflows} openRelated={openRelated} key={workflow.id || workflow.title} workflow={workflow} save={saveEdits} actions={workflowActions} secondaryActions={secondaryActions} downloadDocument={platform.library?.downloadDocument} renderSource={observationsAvailable ? (stage, onImageLayoutChange) => <WorkflowStepEvidence workflow={workflow} stage={stage} platform={platform} onImageLayoutChange={onImageLayoutChange} /> : undefined} /> : <WorkflowDocument workflow={workflow} actions={workflowActions} secondaryActions={secondaryActions} downloadDocument={platform.library?.downloadDocument} sourceLabel={sourceLabel}
-        renderSource={observationsAvailable ? stage => <WorkflowStepEvidence workflow={workflow} stage={stage} platform={platform} /> : undefined} />}
+      {/* The Task Page (editor included) reviews captures one at a time like the
+          Flow Task Page; image-layout authoring stays opt-in for hosts that
+          forward onImageLayoutChange from WorkflowEditor.renderSource. */}
+      {saveEdits ? <WorkflowEditor {...editorOptions} relatedWorkflows={relatedWorkflows} openRelated={openRelated} key={workflow.id || workflow.title} workflow={workflow} save={saveEdits} actions={workflowActions} secondaryActions={secondaryActions} downloadDocument={platform.library?.downloadDocument} renderSource={observationsAvailable ? stage => <WorkflowStepEvidence workflow={workflow} stage={stage} platform={platform} timelineLabel={timelineLabel} /> : undefined} /> : <WorkflowDocument workflow={workflow} actions={workflowActions} secondaryActions={secondaryActions} downloadDocument={platform.library?.downloadDocument} sourceLabel={sourceLabel}
+        renderSource={observationsAvailable ? stage => <WorkflowStepEvidence workflow={workflow} stage={stage} platform={platform} timelineLabel={timelineLabel} /> : undefined} />}
       <div className={styles.workflowNotes}>
       <p className={styles.workflowReviewState}>{workflow.userEditedAt ? ui("Edited by you · sources kept as references") : workflow.evidenceStatus === "supported-steps" ? ui("Source-backed steps · not execution-tested") : ui("Needs review")}</p>
       {saveCorrection && !platform.assistant?.saveFeedback && <WorkflowCorrection key={`correction:${workflow.title}`} workflow={workflow} save={saveCorrection} />}
@@ -763,7 +778,8 @@ export function WorkflowDetail({ breadcrumb, relatedWorkflows, openRelated, edit
           }
           throw error;
         }
-      } : undefined} />}
+      } : undefined} createFlow={createsFlow ? answers => platform.createAutomationFlow!(workflow.id!, answers) : undefined}
+        findFlow={createsFlow && platform.findAutomationFlow ? () => platform.findAutomationFlow!(workflow.id!) : undefined} />}
       {!!workflow.variations.length && <section className={styles.panel}><h2>Variations</h2><ul className={styles.plainList}>{workflow.variations.map(item => <li key={item}>{item}</li>)}</ul></section>}
       {!!actionableFriction.length && <section><div className={styles.sectionHeading}><div><h2>Friction you can affect</h2></div></div><BottleneckList items={actionableFriction.map((item) => ({ ...item, workflowTitle: workflow.title, repetitions: workflow.repetitions }))} /></section>}
       {!!constraints.length && <section><div className={styles.sectionHeading}><div><h2>External and required constraints</h2></div></div><BottleneckList items={constraints.map((item) => ({ ...item, workflowTitle: workflow.title, repetitions: workflow.repetitions }))} numbered={false} /></section>}
@@ -779,6 +795,31 @@ export function WorkflowDetail({ breadcrumb, relatedWorkflows, openRelated, edit
 }
 
 type RankedBottleneck = WorkflowBottleneck & { workflowTitle: string; repetitions: number };
+
+/**
+ * "Open automation" in the Task Page header, once an Automation Flow was
+ * created from this task.
+ */
+function OpenAutomationButton({ taskId, active, find, open }: {
+  taskId: string;
+  active: boolean;
+  find: (taskId: string) => Promise<string | null>;
+  open: (flowId: string) => Promise<void>;
+}) {
+  const [flowId, setFlowId] = useState<string | null>(null);
+  // Looked up per task, and again each time the page is shown: the host keeps
+  // it mounted while hidden, and a Flow may be created meanwhile. The host may
+  // pass a new function on every render.
+  const findRef = useRef(find); findRef.current = find;
+  useEffect(() => {
+    if (!active) return;
+    let current = true;
+    findRef.current(taskId).then(id => { if (current) setFlowId(id); }, () => {});
+    return () => { current = false; };
+  }, [active, taskId]);
+  if (!flowId) return null;
+  return <button className={styles.skillButton} type="button" onClick={() => void open(flowId).catch(() => {})}><Workflow size={14} aria-hidden="true" />Open automation</button>;
+}
 
 function BottleneckList({ items, openWorkflow, numbered = true }: { items: RankedBottleneck[]; openWorkflow?: (title: string) => void; numbered?: boolean }) {
   const ui = useGT();
@@ -946,9 +987,23 @@ export function WorkflowsApp({ modelControl, readyWorkflowIds, reviewRequest, on
   }, [readyWorkflowIds]);
 
   const handledReview = useRef<string | null>(null);
+  // A review request (a notification, a deeplink) reads the catalog again
+  // before opening its workflow: an open page may show an older copy, whose
+  // answers would then be refused as changed. The opened page is mounted
+  // afresh on that copy.
+  const reloadedForReview = useRef<string | null>(null);
+  const [reviewVisit, setReviewVisit] = useState(0);
   useEffect(() => {
-    if (!active || !catalogReady || catalogLoadError || !reviewRequest || handledReview.current === reviewRequest.key) return;
+    if (!active || !reviewRequest || handledReview.current === reviewRequest.key) return;
+    if (platform.loadCapturedWork && reloadedForReview.current !== reviewRequest.key) {
+      reloadedForReview.current = reviewRequest.key;
+      setCatalogReady(false);
+      setCatalogLoadRevision(value => value + 1);
+      return;
+    }
+    if (!catalogReady || catalogLoadError) return;
     handledReview.current = reviewRequest.key;
+    setReviewVisit(value => value + 1);
     setReviewError("");
     setReviewIds(new Set(reviewRequest.workflowIds ?? []));
     setQuery("");
@@ -959,7 +1014,7 @@ export function WorkflowsApp({ modelControl, readyWorkflowIds, reviewRequest, on
       if (reviewRequest.workflowId) setReviewError("This workflow is no longer available. Your other workflows are shown below.");
     }
     onReviewRequestHandled?.(!reviewRequest.workflowId || index >= 0);
-  }, [active, catalogReady, catalogLoadError, reviewRequest, workflows, openWorkflow, navigate, onReviewRequestHandled]);
+  }, [active, catalogReady, catalogLoadError, reviewRequest, workflows, openWorkflow, navigate, onReviewRequestHandled, platform.loadCapturedWork]);
 
   const focusWorkflowSearch = useCallback(() => {
     navigate("workflows");
@@ -1264,7 +1319,7 @@ export function WorkflowsApp({ modelControl, readyWorkflowIds, reviewRequest, on
   let content: React.ReactNode;
   switch (view) {
     case "workflows": content = <WorkflowsView documentFilters={!activeScope || activeScope.kind === "personal"} reviewIds={reviewIds} activityState={runActivity} analysisUnavailableReason={onAnalysisUnavailable ? undefined : analysisUnavailableReason} workflows={workflows} knownWorkflowCount={knownWorkflows.length} query={query} setQuery={setQuery} openWorkflow={openWorkflow} analyze={() => void analyze()} analyzing={analyzing} error={analysisError || reviewError} stop={platform.cancelAnalysisJob ? () => { void platform.cancelAnalysisJob!().catch(error => setAnalysisError(String(error))); } : undefined} updatedAt={analysis?.analyzedAt} checkedThrough={analysis?.checkedThrough} changes={analysis?.changes} job={analysisJob} subscribe={platform.subscribeAnalysisActivity} />; break;
-    case "workflow": content = <WorkflowDetail breadcrumb={workflowTrail.length > 0 ? <nav aria-label="Workflow path">{workflowTrail.map((id,i)=><button className={styles.backButton} key={`${id}-${i}`} onClick={()=>{const index=workflows.findIndex(w=>w.id===id);if(index>=0){setSelectedWorkflow(index);setWorkflowTrail(workflowTrail.slice(0,i));navigate("workflow");}}}>{workflows.find(w=>w.id===id)?.title ?? "Previous workflow"} /</button>)}</nav> : undefined} relatedWorkflows={workflows} openRelated={id=>{const index=workflows.findIndex(w=>w.id===id);if(index>=0){setWorkflowTrail(trail=>[...trail.slice(-9),activeWorkflow!.id!]);setSelectedWorkflow(index);navigate("workflow");}}} canSaveAnswers={catalogReady && (!activeScope || activeScope.kind === "personal")} composerAccessory={composerAccessory} active={active} onAnswersSaved={saved => setAnalysis(current => current ? { ...current, analysis: { ...current.analysis, workflows: current.analysis.workflows.map(w => (w.id ?? w.title) === (saved.id ?? saved.title) && (saved.revision ?? 0) >= (w.revision ?? 0) ? saved : w) } } : current)} key={activeWorkflow?.id || activeWorkflow?.title} onShareWorkflow={onShareWorkflow} onShareDocument={onShareDocument} workflowAgentActions={workflowAgentActions} workflow={activeWorkflow} navigate={navigate} platform={platform} workProfile={workProfile} saveEdits={catalogReady && platform.saveWorkflowEdits && (!activeScope || activeScope.kind === "personal") ? async (draft) => {
+    case "workflow": content = <WorkflowDetail breadcrumb={workflowTrail.length > 0 ? <nav aria-label="Workflow path">{workflowTrail.map((id,i)=><button className={styles.backButton} key={`${id}-${i}`} onClick={()=>{const index=workflows.findIndex(w=>w.id===id);if(index>=0){setSelectedWorkflow(index);setWorkflowTrail(workflowTrail.slice(0,i));navigate("workflow");}}}>{workflows.find(w=>w.id===id)?.title ?? "Previous workflow"} /</button>)}</nav> : undefined} relatedWorkflows={workflows} openRelated={id=>{const index=workflows.findIndex(w=>w.id===id);if(index>=0){setWorkflowTrail(trail=>[...trail.slice(-9),activeWorkflow!.id!]);setSelectedWorkflow(index);navigate("workflow");}}} canSaveAnswers={catalogReady && (!activeScope || activeScope.kind === "personal")} composerAccessory={composerAccessory} active={active} onAnswersSaved={saved => setAnalysis(current => current ? { ...current, analysis: { ...current.analysis, workflows: current.analysis.workflows.map(w => (w.id ?? w.title) === (saved.id ?? saved.title) && (saved.revision ?? 0) >= (w.revision ?? 0) ? saved : w) } } : current)} key={`${activeWorkflow?.id || activeWorkflow?.title}:${reviewVisit}`} onShareWorkflow={onShareWorkflow} onShareDocument={onShareDocument} workflowAgentActions={workflowAgentActions} workflow={activeWorkflow} navigate={navigate} platform={platform} workProfile={workProfile} saveEdits={catalogReady && platform.saveWorkflowEdits && (!activeScope || activeScope.kind === "personal") ? async (draft) => {
       let saved: WorkflowMap;
       try { saved = await platform.saveWorkflowEdits!(draft); }
       catch (error) {

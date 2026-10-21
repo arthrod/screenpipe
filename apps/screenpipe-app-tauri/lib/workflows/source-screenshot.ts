@@ -1,6 +1,7 @@
 // screenpipe — AI that knows everything you've seen, said, or heard
 // https://screenpipe.com
 import { localFetch } from "@/lib/api";
+import { fetchUntilReleased } from "./privacy-pending";
 import type { WorkflowScreenshot } from "@screenpipe/workflows-ui/model";
 
 // Date.parse alone loses sub-millisecond identity. Recorder timestamps can
@@ -25,7 +26,9 @@ export async function loadWorkflowScreenshot(timestamp: string, app: string, sig
     const source = await findWorkflowScreenshot(timestamp, app, controller.signal, frameId);
     if (!source) return null;
     const frame = { frame_id: source.frameId, timestamp: source.timestamp, app_name: source.app };
-    const image = await localFetch(`/frames/${frame.frame_id}?fallback=false`, { signal: controller.signal });
+    // Frame media answers 503 privacy_pending until redaction releases; wait
+    // bounded, then raise a distinguishable error instead of "gone".
+    const image = await fetchUntilReleased(() => localFetch(`/frames/${frame.frame_id}?fallback=false`, { signal: controller.signal }), { signal: controller.signal });
     if (image.status === 404 || image.status === 410) return null;
     if (!image.ok) throw new Error("Could not load the source screenshot");
     const mime = image.headers.get("content-type")?.split(";")[0] ?? "";
@@ -104,7 +107,7 @@ export async function findWorkflowScreenshot(timestamp: string, app: string, sig
       const query = new URLSearchParams({ content_type: "ocr", app_name: app,
         start_time: new Date(time - 1).toISOString(), end_time: new Date(time + 1).toISOString(),
         limit: "20", offset: "0" });
-      const response = await localFetch(`/search?${query}`, { signal: controller.signal });
+      const response = await fetchUntilReleased(() => localFetch(`/search?${query}`, { signal: controller.signal }), { signal: controller.signal });
       if (!response.ok) throw new Error("Could not look up the source screenshot");
       const result = await response.json();
       frame = result.data?.map((row: { content?: Record<string, unknown> }) => row.content)

@@ -17,7 +17,9 @@ const {
   setPendingNavigationMock,
   showWindowMock,
   routeNotificationDeeplinkMock,
+  openFlowReviewLinkMock,
 } = vi.hoisted(() => ({
+  openFlowReviewLinkMock: vi.fn(async (_href: string) => true),
   ownedBrowserNavigateMock: vi.fn(async () => ({ status: "ok" as const, data: null })),
   openUrlMock: vi.fn(async () => undefined),
   copyTextToClipboardMock: vi.fn(async () => ({ status: "ok" as const, data: null })),
@@ -62,6 +64,10 @@ vi.mock("@/lib/hooks/use-timeline-store", () => ({
 
 vi.mock("@/lib/notifications/actions", () => ({
   routeNotificationDeeplink: routeNotificationDeeplinkMock,
+}));
+
+vi.mock("@/lib/workflows/automation-flows", () => ({
+  openFlowReviewLink: openFlowReviewLinkMock,
 }));
 
 describe("MarkdownBlock", () => {
@@ -359,6 +365,25 @@ describe("MarkdownBlock", () => {
         "screenpipe://meeting/42",
       );
     });
+    expect(setPendingNavigationMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a Flow's Review Screen from the link the chat ends a Flow change with", async () => {
+    render(
+      <MarkdownBlock
+        text="[Revoir le Flow](screenpipe://flows/spNovaFlow000001)"
+        isUser={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Revoir le Flow" }));
+
+    await waitFor(() => {
+      expect(openFlowReviewLinkMock).toHaveBeenCalledWith(
+        "screenpipe://flows/spNovaFlow000001",
+      );
+    });
+    expect(routeNotificationDeeplinkMock).not.toHaveBeenCalled();
     expect(setPendingNavigationMock).not.toHaveBeenCalled();
   });
 

@@ -22,6 +22,7 @@ import { createCodeMarkdownComponents } from "@/components/markdown/code-block";
 import { timelineTimestampFromDeepLink } from "@/lib/timeline-deeplink";
 import { jumpToTimelineMoment } from "@/lib/timeline-navigation";
 import { routeNotificationDeeplink } from "@/lib/notifications/actions";
+import { openFlowReviewLink } from "@/lib/workflows/automation-flows";
 import { commands } from "@/lib/utils/tauri";
 import { useTimelineStore } from "@/lib/hooks/use-timeline-store";
 import { cn } from "@/lib/utils";
@@ -212,13 +213,19 @@ export function MarkdownBlock({
             href?.startsWith("screenpipe://timeline") ||
             href?.startsWith("screenpipe://frame") ||
             href?.startsWith("screenpipe://meeting") ||
-            href?.startsWith("screenpipe://view")
+            href?.startsWith("screenpipe://view") ||
+            href?.startsWith("screenpipe://flows/")
           ) {
             const handleScreenpipeLinkClick = async (
               e: React.MouseEvent<HTMLAnchorElement>,
             ) => {
               e.preventDefault();
               try {
+                if (href.startsWith("screenpipe://flows/")) {
+                  await openFlowReviewLink(href);
+                  return;
+                }
+
                 if (href.startsWith("screenpipe://view")) {
                   const viewerPath = screenpipeViewerPathFromHref(href);
                   if (viewerPath && onOpenViewerPath) {

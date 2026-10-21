@@ -5,8 +5,16 @@ import posthog from "posthog-js";
 import { localFetch } from "@/lib/api";
 
 export const WORKFLOWS_FLAG = "workflows";
+/**
+ * A local build opens Workflows without the PostHog flag when built with
+ * NEXT_PUBLIC_SCREENPIPE_WORKFLOWS_ROLLOUT=1 (hackathon demo machine). It only
+ * shows the view; background AI tasks still need their explicit opt-in.
+ */
+export function isWorkflowsRolloutForcedLocally(): boolean {
+  return process.env.NEXT_PUBLIC_SCREENPIPE_WORKFLOWS_ROLLOUT === "1";
+}
 export function isWorkflowsRolloutEnabled(flag: unknown): boolean {
-  return flag === true;
+  return flag === true || isWorkflowsRolloutForcedLocally();
 }
 export function useWorkflowsRolloutEnabled(): boolean {
   const flag = useFeatureFlagEnabled(WORKFLOWS_FLAG);

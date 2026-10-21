@@ -14,6 +14,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const tauriCommandMocks = vi.hoisted(() => ({
+  getFlowActivationKey: vi.fn(async () => "ui-key"),
   openViewerWindow: vi.fn(async () => ({ status: "ok" as const, data: null })),
   showWindowActivated: vi.fn(async () => ({
     status: "ok" as const,
@@ -75,6 +76,69 @@ describe("notification API actions", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fps: 1 }),
     });
+  });
+
+  it("« Relancer » on a failed Flow run retries it, then opens the Flow's Review Screen (D17)", async () => {
+    // The action exactly as the engine's failure notice sends it
+    // (crates/screenpipe-engine/src/automation_flows/failures.rs).
+    apiMocks.isLocalApiUrl.mockReturnValue(true);
+    apiMocks.localFetch.mockResolvedValue(Response.json({ executionId: "43", outcome: "ticket" }));
+    tauriCommandMocks.showWindowActivated.mockClear();
+
+    await executeNotificationAction({
+      type: "api",
+      label: "Relancer",
+      method: "POST",
+      url: "/automation-flows/spNovaFlow000001/runs/42/retry",
+      body: {},
+      deeplink_url: "screenpipe://flows/spNovaFlow000001",
+    });
+
+    expect(apiMocks.localFetch).toHaveBeenCalledTimes(1);
+    // The engine retries only on the user's click: the request carries the
+    // UI credential the app hands its webview, like the Review Screen's.
+    expect(apiMocks.localFetch).toHaveBeenCalledWith("/automation-flows/spNovaFlow000001/runs/42/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-screenpipe-flow-activation": "ui-key" },
+      body: "{}",
+    });
+    expect(tauriCommandMocks.showWindowActivated).toHaveBeenCalledWith({
+      Home: { page: "pipes&tab=flows&flow=spNovaFlow000001" },
+    });
+  });
+
+  it("a notification's other api actions never carry the UI credential, even to a Flow route", async () => {
+    // Any local sender (a pipe, the chat agent) chooses a notification's
+    // actions: only « Relancer »'s retry route gets the credential.
+    apiMocks.isLocalApiUrl.mockReturnValue(true);
+    apiMocks.localFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    for (const url of [
+      "/automation-flows/spNovaFlow000001/activate",
+      "/automation-flows/spNovaFlow000001/runs/42/retry/../../../activate",
+      "/capture/hd/start",
+    ]) {
+      apiMocks.localFetch.mockClear();
+      await executeNotificationAction({ type: "api", url, body: { versionId: "v1" } });
+      const [, init] = apiMocks.localFetch.mock.calls[0];
+      expect(init.headers, url).toEqual({ "Content-Type": "application/json" });
+    }
+  });
+
+  it("« Relancer » that n8n refuses says why and leaves the user where they are", async () => {
+    apiMocks.isLocalApiUrl.mockReturnValue(true);
+    apiMocks.localFetch.mockResolvedValue(Response.json({ error: "run_not_failed" }, { status: 409 }));
+    tauriCommandMocks.showWindowActivated.mockClear();
+
+    await expect(
+      executeNotificationAction({
+        type: "api",
+        method: "POST",
+        url: "/automation-flows/spNovaFlow000001/runs/42/retry",
+        body: {},
+        deeplink_url: "screenpipe://flows/spNovaFlow000001",
+      }),
+    ).rejects.toThrow(/HTTP 409.*run_not_failed/);
+    expect(tauriCommandMocks.showWindowActivated).not.toHaveBeenCalled();
   });
 });
 

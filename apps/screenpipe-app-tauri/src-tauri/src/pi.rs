@@ -5712,7 +5712,7 @@ pub async fn pi_set_thinking_level(
     session_id: Option<String>,
     level: String,
 ) -> Result<(), String> {
-    let valid_levels = ["low", "medium", "high"];
+    let valid_levels = ["low", "medium", "high", "max"];
     if !valid_levels.contains(&level.as_str()) {
         return Err(format!(
             "Invalid thinking level '{}'. Valid values: {:?}",
@@ -5815,7 +5815,7 @@ pub async fn pi_get_thinking_level() -> Result<String, String> {
         .unwrap_or("medium");
     // Clamp to supported values — settings.json may have stale levels from old versions
     let level = match raw {
-        "low" | "medium" | "high" => raw,
+        "low" | "medium" | "high" | "max" => raw,
         _ => "medium",
     };
     Ok(level.to_string())

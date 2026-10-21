@@ -4,6 +4,7 @@
 "use client";
 
 import { rememberWorkflowReview, workflowReviewLink } from "@/lib/workflows/notification";
+import { followFlowsNavigation } from "@/lib/workflows/automation-flows";
 import React, { useEffect, useState, useRef, Suspense, useCallback } from "react";
 import {
   TimerReset,
@@ -1311,6 +1312,8 @@ function HomeContent() {
     } else {
       const mapped = section === "feedback" ? "help" : section;
       if (ALL_SECTIONS.includes(mapped)) {
+        // An Automation Flow's Review Screen (failure notification, Chat overlay).
+        followFlowsNavigation(url);
         setActiveSection(mapped);
         if (mapped === "brain") {
           window.dispatchEvent(new Event(ONBOARDING_BRAIN_HANDOFF_EVENT));
