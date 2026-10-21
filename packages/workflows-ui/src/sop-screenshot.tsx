@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { WorkflowsPlatform } from "./platform";
 import { useSourceScreenshot } from "./use-source-screenshot";
+import { isEmbeddedScreenshot } from "./screenshots";
 import type { WorkflowScreenshot } from "./model";
 import styles from "./workflow-guide.module.css";
 
@@ -49,8 +50,11 @@ export function SopScreenshot(props: Parameters<typeof LegacySopScreenshot>[0] &
   return props.source && props.loadSource ? <ExactSopScreenshot {...props} source={props.source} /> : <LegacySopScreenshot {...props} />;
 }
 function ExactSopScreenshot({ source, loadSource, alt, onLoad, onError }: Parameters<typeof SopScreenshot>[0] & { source: WorkflowScreenshot }) {
-  const image = useSourceScreenshot({ evidence: [] }, false, loadSource, source);
+  // Embedded captures render from their own pixels; the recorder owns no negative frame.
+  const load = isEmbeddedScreenshot(source) ? undefined : loadSource;
+  const image = useSourceScreenshot({ evidence: [] }, !load, load, source);
+  const url = load ? image.image?.dataUrl : source.dataUrl;
   return <figure ref={image.ref}>
-    {image.image ? <img src={image.image.dataUrl} alt={alt} draggable={false} onLoad={onLoad} onError={onError} /> : <p className={styles.muted} role="status">{image.status === "loading" ? "Loading source screenshot…" : "This screenshot is no longer available."}{image.canRetry && image.status !== "loading" && <button onClick={image.retry}>Retry screenshot</button>}</p>}
+    {url ? <img src={url} alt={alt} draggable={false} onLoad={onLoad} onError={onError} /> : <p className={styles.muted} role="status">{image.status === "loading" ? "Loading source screenshot…" : "This screenshot is no longer available."}{image.canRetry && image.status !== "loading" && <button onClick={image.retry}>Retry screenshot</button>}</p>}
   </figure>;
 }

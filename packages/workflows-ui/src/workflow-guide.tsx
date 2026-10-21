@@ -553,7 +553,16 @@ export function WorkflowGuide({
                               update({
                                 ...draft,
                                 steps: draft.steps.map((s, j) =>
-                                  j === i ? { ...s, includeImage: false, imageExcluded: true } : s,
+                                  j === i
+                                    ? {
+                                        ...s,
+                                        includeImage: false,
+                                        imageExcluded: true,
+                                        // Drop the reference too, so a removed
+                                        // capture cannot linger in saved state.
+                                        imageReview: undefined,
+                                      }
+                                    : s,
                                 ),
                               })
                             }

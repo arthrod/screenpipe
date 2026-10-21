@@ -151,6 +151,17 @@ it("selects a verified screenshot even if the first capture is unreviewed",()=>{
  expect(guideVideoScenes(guide,w)[0].imageFrameId).toBe(8);
 });
 
+it("builds scenes for embedded captures from their own pixels and no frame ID", () => {
+  const w = structuredClone(workflow);
+  w.stages[0].screenshot = { frameId: -1, timestamp: "2026-09-01T10:00:00Z", app: "Docs", visualVerified: true, matchDistanceSeconds: 0, dataUrl: "data:image/webp;base64,AAAA" };
+  const g = { ...guide, steps: [{ ...guide.steps[0], imageReview: { frameId: -1, timestamp: w.stages[0].screenshot!.timestamp } }] };
+  const scene = guideVideoScenes(g, w)[0];
+  expect(scene.image).toBe("data:image/webp;base64,AAAA");
+  expect(scene.imageFrameId).toBeUndefined();
+  expect(scene.requiresImage).toBe(true);
+  expect(guideVideoDraft(g, w).scenes[0].includeImage).toBe(true);
+});
+
 it("retains earlier successful renders and releases only the oldest beyond three versions",async()=>{
  const p=platform();let number=0;vi.mocked(p.generate).mockImplementation(async()=>({...result,path:`/preview-${++number}.mp4`,url:`asset:/preview-${number}.mp4`}));
  const view=render(<GuideVideoPanel guide={guide} workflow={workflow} platform={p} save={async()=>{}} />);

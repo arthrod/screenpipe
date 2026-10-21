@@ -67,7 +67,9 @@ export function parseGuide(
         (s.imageExcluded === undefined || typeof s.imageExcluded === "boolean") &&
         (s.imageReview === undefined ||
           (Number.isInteger(s.imageReview?.frameId) &&
-            s.imageReview.frameId >= 0 &&
+            // Embedded captures carry negative frameIds; their pixels stay in
+            // the workflow catalog, and stageScreenshots resolves them only
+            // when paired with an embedded data URL.
             text(s.imageReview.timestamp))) &&
         (s.sourceStage === null ||
           (Number.isInteger(s.sourceStage) && s.sourceStage >= 0)),

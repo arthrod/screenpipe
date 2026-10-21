@@ -69,7 +69,9 @@ export const desktopGuideVideo: GuideVideoPlatform = {
       const prepared = [];
       for (const scene of scenes) {
         signal.throwIfAborted();
-        let frameId = scene.imageFrameId;
+        // Embedded captures carry their own pixels; the recorder owns no
+        // negative frame, so only positive IDs go near the loader.
+        let frameId = scene.imageFrameId !== undefined && scene.imageFrameId > 0 ? scene.imageFrameId : undefined;
         if (!frameId && scene.imageSources?.length) {
           for (const source of scene.imageSources.slice(0, 3)) {
             const frame = await findWorkflowScreenshot(source.timestamp, source.app, signal);

@@ -35,6 +35,12 @@ describe("desktop video boundary", () => {
     expect(mocks.fetch).toHaveBeenCalledOnce();
     expect(mocks.create.mock.calls[0][1][0].image).toMatch(/^data:image\/png;base64,/);
   });
+  it("renders embedded scenes from their own pixels without touching the recorder", async () => {
+    const image = "data:image/png;base64,YQ==";
+    await desktopGuideVideo.generate([{ ...scenes[0], image, imageFrameId: -1, requiresImage: true }], new AbortController().signal, vi.fn());
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.create.mock.calls[0][1][0].image).toBe(image);
+  });
   it("handles cancellation before native registration and discards a late successful output", async () => {
     const abort = new AbortController(); let event!: (value: {payload:string}) => void;
     mocks.listen.mockImplementation(async (_name, handler) => { event=handler; return mocks.unlisten; });
