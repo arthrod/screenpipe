@@ -208,6 +208,45 @@
       "layers": [
         "performance"
       ]
+    },
+    {
+      "id": "automation-flows-lifecycle",
+      "label": "Automation Flows lifecycle: review, activation, unpublish, retry, health",
+      "layers": [
+        "automation-flows",
+        "local-api"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ]
+    },
+    {
+      "id": "automation-flows-n8n-gating",
+      "label": "Flow checks and n8n node catalog gating (no invented nodes)",
+      "layers": [
+        "automation-flows",
+        "local-api"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ]
+    },
+    {
+      "id": "automation-flows-cloud-proxy",
+      "label": "Cloud proxy and ChatGPT proxy routing for Flow nodes",
+      "layers": [
+        "automation-flows",
+        "local-api"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ]
     }
   ],
   "suites": [
@@ -1518,6 +1557,82 @@
       "confidence": "conditional",
       "kind": "mixed",
       "notes": "Existing isolated-process missing/stalled bus regressions plus ignored live logind inhibitor tests. Live tests require logind and explicit execution."
+    },
+    {
+      "id": "engine-automation-flows",
+      "label": "Automation Flows engine service: lifecycle, activation credential, failures, retry",
+      "crate": "screenpipe-engine",
+      "files": [
+        "src/automation_flows.rs",
+        "src/automation_flows/health.rs",
+        "tests/automation_flows_test.rs"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "layers": [
+        "automation-flows",
+        "local-api"
+      ],
+      "flows": [
+        "automation-flows-lifecycle"
+      ],
+      "criticality": "high",
+      "confidence": "strong",
+      "kind": "mixed",
+      "notes": "Flow review-record store, UI activation credential gate, n8n-backed lifecycle (publish/unpublish/pause), failure records and credential-gated retry; 5k+ line integration suite in tests/automation_flows_test.rs."
+    },
+    {
+      "id": "engine-flow-checks-n8n-nodes",
+      "label": "Flow checks gate and n8n node catalog",
+      "crate": "screenpipe-engine",
+      "files": [
+        "src/flow_checks.rs",
+        "src/n8n_nodes.rs"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "layers": [
+        "automation-flows",
+        "local-api"
+      ],
+      "flows": [
+        "automation-flows-n8n-gating"
+      ],
+      "criticality": "high",
+      "confidence": "strong",
+      "kind": "unit",
+      "notes": "Refuses invented/disabled/incomplete nodes against the catalog generated from the live n8n image; browsing layer equals check layer."
+    },
+    {
+      "id": "engine-automation-flows-proxies",
+      "label": "Cloud proxy and ChatGPT proxy routes used by Flow nodes",
+      "crate": "screenpipe-engine",
+      "files": [
+        "src/routes/chatgpt_proxy.rs",
+        "src/routes/cloud_proxy.rs"
+      ],
+      "platforms": [
+        "windows",
+        "macos",
+        "linux"
+      ],
+      "layers": [
+        "automation-flows",
+        "local-api"
+      ],
+      "flows": [
+        "automation-flows-cloud-proxy"
+      ],
+      "criticality": "high",
+      "confidence": "strong",
+      "kind": "unit",
+      "notes": "chatgpt/<model> routing via the Codex API and cloud model proxying; SSRF-free by construction per review."
     }
   ]
 }
