@@ -16,6 +16,7 @@ import type { AppUser } from "@/lib/app-entitlement";
 import { isOnboardingCheckoutResolved } from "@/lib/onboarding-checkout";
 import { useGT } from "gt-react";
 import { useUiLocale } from "@/lib/i18n/provider";
+import { SelfHostContinueButton } from "@/components/self-host-continue-button";
 
 
 const HOSTED_CHECKOUT_URL = screenpipeWebUrl(
@@ -41,7 +42,7 @@ export default function PlanSelectionStep({
   const { settings, loadUser } = useSettings();
   const user = settings.user as AppUser | null | undefined;
   const [returnStatus] = useState(checkoutStatus);
-  const [busy, setBusy] = useState(returnStatus !== "cancelled");
+  const [busy, setBusy] = useState(returnStatus === "complete");
   const [error, setError] = useState<string | null>(null);
   const [returnRecoveryFinished, setReturnRecoveryFinished] = useState(
     returnStatus !== "complete",
@@ -89,10 +90,10 @@ export default function PlanSelectionStep({
     }
   }, [userToken, locale]);
 
-  useEffect(() => {
-    if (returnStatus !== null) return;
-    startCheckout();
-  }, [returnStatus, startCheckout]);
+  const continueWithoutSubscription = useCallback(async () => {
+    advancedRef.current = true;
+    await handleNextSlide();
+  }, [handleNextSlide]);
 
   useEffect(() => {
     if (returnStatus !== "complete") return;
@@ -245,6 +246,9 @@ export default function PlanSelectionStep({
             </p>
           )}
         </div>
+        <div className="mt-4">
+          <SelfHostContinueButton onContinue={continueWithoutSubscription} />
+        </div>
       </div>
     );
   }
@@ -272,6 +276,9 @@ export default function PlanSelectionStep({
         >
           {busy ? ui("Opening checkout") : ui("Retry secure checkout")}
         </button>
+        <div className="mt-3">
+          <SelfHostContinueButton onContinue={continueWithoutSubscription} />
+        </div>
       </div>
     );
   }
@@ -282,20 +289,22 @@ export default function PlanSelectionStep({
       data-testid="onboarding-card-capture"
     >
       <h2 className="text-xl font-semibold normal-case">
-        Opening secure checkout
+        Choose how to continue
       </h2>
       <p className="mt-3 font-mono text-[11px] text-muted-foreground">
-        {error || ui("Loading screenpipe.com")}
+        {error || "Start a trial with a payment method, or keep using screenpipe locally."}
       </p>
-      {error && (
-        <button
-          type="button"
-          onClick={startCheckout}
-          className="mt-5 border px-4 py-2 font-mono text-[10px] normal-case tracking-widest transition-colors hover:bg-foreground hover:text-background"
-        >
-          Try again
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={startCheckout}
+        disabled={busy}
+        className="mt-5 w-full border bg-foreground px-4 py-2 font-mono text-[10px] normal-case tracking-widest text-background transition-opacity hover:opacity-80 disabled:opacity-50"
+      >
+        {busy ? ui("Opening checkout") : "Add payment method"}
+      </button>
+      <div className="mt-3">
+        <SelfHostContinueButton onContinue={continueWithoutSubscription} />
+      </div>
     </div>
   );
 }

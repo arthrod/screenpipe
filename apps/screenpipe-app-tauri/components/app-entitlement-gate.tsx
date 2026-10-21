@@ -38,6 +38,8 @@ import { isPrimaryWindow } from "@/lib/utils/is-primary-window";
 import { commands } from "@/lib/utils/tauri";
 import { EnterpriseLicensePrompt } from "@/components/enterprise-license-prompt";
 import { useGT } from "gt-react";
+import { SelfHostContinueButton } from "@/components/self-host-continue-button";
+import { isSelfHostUnlocked } from "@/lib/self-host";
 
 
 const E2E_ACCOUNT_USER_KEY = "screenpipe_e2e_account_user";
@@ -157,7 +159,7 @@ export function AppEntitlementGate({
   const [, setPaidPolicyExpiryTick] = useState(0);
   const user = settings.user as AppUser | null | undefined;
   const devBypass = isDevBillingBypassEnabled();
-  const devLoginSkip = isDevLoginSkipEnabled();
+  const devLoginSkip = isDevLoginSkipEnabled() || isSelfHostUnlocked();
   // Compute the wake-up first. If the boundary passes during this render, the
   // later classifiers either gate immediately or this deadline still rerenders
   // them; computing it last could observe "expired" after they observed paid.
@@ -878,6 +880,7 @@ export function AppEntitlementGate({
             <LogIn className="h-4 w-4" />
             Sign in
           </Button>
+          <SelfHostContinueButton />
         </div>
         {devLoginBlock}
       </EntitlementShell>
@@ -938,6 +941,7 @@ export function AppEntitlementGate({
         >
           Use different account
         </Button>
+        <SelfHostContinueButton />
         {refreshError && (
           <p className="font-mono text-[11px] leading-5 text-destructive">
             Refresh failed

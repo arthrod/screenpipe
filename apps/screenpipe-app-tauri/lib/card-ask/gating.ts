@@ -8,6 +8,7 @@ import {
   hasVerifiedPaidPlan,
   type AppUser,
 } from "@/lib/app-entitlement";
+import { isSelfHostUnlocked } from "@/lib/self-host";
 
 /**
  * PostHog multivariate flag deciding *when* we ask a non-paying user for a
@@ -179,6 +180,7 @@ export function isCardAskEligible(
   user: AppUser | null | undefined,
   isSettingsLoaded: boolean,
 ): boolean {
+  if (isSelfHostUnlocked()) return false;
   if (!isSettingsLoaded) return false;
   if (!user) return false;
 
@@ -234,6 +236,7 @@ export function isExpiringCardlessGrant(
   nowMs: number,
   windowMs: number = GRANT_EXPIRY_WINDOW_MS,
 ): boolean {
+  if (isSelfHostUnlocked()) return false;
   if (!user) return false;
   if (user.has_payment_method !== false) return false;
 
