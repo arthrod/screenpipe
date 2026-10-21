@@ -5,6 +5,7 @@ import type { VideoDraft, GuideVideoScene } from "@screenpipe/workflows-ui";
 import { commands } from "@/lib/utils/tauri";
 import { findWorkflowScreenshot } from "./source-screenshot";
 import { loadVideoScreenshot } from "./guide-video";
+import { isPrivacyPendingError } from "./privacy-pending";
 
 /** A turn-scoped project, with pixels outside the prompt and no account credentials. */
 export async function stageVideoProject(draft: VideoDraft, scenes: GuideVideoScene[], signal: AbortSignal) {
@@ -38,17 +39,28 @@ export async function stageVideoProject(draft: VideoDraft, scenes: GuideVideoSce
       let data = scene.image;
       let frameId = scene.imageFrameId;
       if (!frameId && scene.imageSources?.length) {
-        for (const source of scene.imageSources.slice(0, 3)) {
-          const frame = await findWorkflowScreenshot(source.timestamp, source.app, signal);
-          if (frame) { frameId = frame.frameId; break; }
+        try {
+          for (const source of scene.imageSources.slice(0, 3)) {
+            const frame = await findWorkflowScreenshot(source.timestamp, source.app, signal);
+            if (frame) { frameId = frame.frameId; break; }
+          }
+        } catch (error) {
+          // A privacy hold on the recorder read is temporary; the staged
+          // project keeps the scene's own pixels instead of failing.
+          if (!isPrivacyPendingError(error)) throw error;
         }
       }
       if (frameId) {
         if (!cache.has(frameId)) {
           try { cache.set(frameId, await loadVideoScreenshot(frameId, signal)); }
-          catch { signal.throwIfAborted(); cache.set(frameId, null); }
+          catch (error) {
+            signal.throwIfAborted();
+            // While redaction holds the original, leave the slot unset so the
+            // scene keeps its own pixels instead of dropping the image.
+            if (!isPrivacyPendingError(error)) cache.set(frameId, null);
+          }
         }
-        data = cache.get(frameId) ?? null;
+        data = cache.has(frameId) ? cache.get(frameId) ?? null : scene.image ?? null;
       }
       if (!data) continue;
       const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(data);

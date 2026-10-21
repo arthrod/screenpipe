@@ -37,6 +37,25 @@ describe("activity notification deeplinks", () => {
   });
 });
 
+describe("Automation Flow notification deeplinks", () => {
+  it("opens the Flow's Review Screen in Home (a failed run, D16)", async () => {
+    const showWindowActivated = vi.fn().mockResolvedValue(undefined);
+    const emitEvent = vi.fn().mockResolvedValue(undefined);
+    const review = { Home: { page: "pipes&tab=flows&flow=spNovaFlow000001" } };
+
+    expect(windowForDeeplink("screenpipe://flows/spNovaFlow000001")).toEqual(review);
+    await routeNotificationDeeplink("screenpipe://flows/spNovaFlow000001", {
+      showWindowActivated,
+      emitEvent,
+      sleepMs: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(showWindowActivated).toHaveBeenCalledTimes(1);
+    expect(showWindowActivated).toHaveBeenCalledWith(review);
+    expect(emitEvent).not.toHaveBeenCalledWith("deep-link-received", expect.anything());
+  });
+});
+
 describe("notification file links", () => {
   it("extracts the local path from view deeplinks and file URLs", () => {
     expect(

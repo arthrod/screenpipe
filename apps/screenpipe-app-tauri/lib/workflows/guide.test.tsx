@@ -349,6 +349,23 @@ describe("guide editor", () => {
     expect(guideHtml(saved, w, true)).not.toContain("<img ");
     expect(guideVideoScenes(saved, w)[0].imageFrameId).toBeUndefined();
   });
+  it("shows an embedded selection from its own pixels and clears it when removed", async () => {
+    const w = structuredClone(workflow);
+    w.stages[0].screenshot = { frameId: -1, timestamp: workflow.stages[0].screenshot!.timestamp, app: "Docs", visualVerified: true, matchDistanceSeconds: 0, dataUrl: "data:image/webp;base64,AAAA" };
+    w.stages[1].screenshot = undefined;
+    const withEmbedded = structuredClone(guide);
+    withEmbedded.steps[0].imageReview = { frameId: -1, timestamp: w.stages[0].screenshot!.timestamp };
+    const platform = { ...host(), load: vi.fn(async () => withEmbedded), loadSourceScreenshot: vi.fn(), loadScreenshot: vi.fn() };
+    render(<WorkflowGuide workflow={w} platform={platform} close={() => {}} />);
+    expect(await screen.findByRole("img", { name: "Source for Collect sources" })).toHaveAttribute("src", "data:image/webp;base64,AAAA");
+    expect(platform.loadSourceScreenshot).not.toHaveBeenCalled();
+    expect(platform.loadScreenshot).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove screenshot" }));
+    await waitFor(() => expect(platform.save).toHaveBeenCalled());
+    const saved = parseGuide(JSON.parse(JSON.stringify(platform.save.mock.calls.at(-1)![0])));
+    expect(saved.steps[0].imageExcluded).toBe(true);
+    expect(saved.steps[0].imageReview).toBeUndefined();
+  });
   it("loads originals on demand and revokes their URLs without saving pixels", async () => {
     const loadScreenshot = vi.fn().mockResolvedValue("blob:original-source");
     const originalRevoke = URL.revokeObjectURL;

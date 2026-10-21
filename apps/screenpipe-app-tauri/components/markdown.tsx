@@ -92,6 +92,8 @@ export const chatUrlTransform = createScreenpipeUrlTransform([
   "frame",
   "meeting",
   "view",
+  // An Automation Flow's Review Screen (automation-flows skill).
+  "flows",
 ]);
 
 export function screenpipeViewerPathFromHref(href: string): string | null {

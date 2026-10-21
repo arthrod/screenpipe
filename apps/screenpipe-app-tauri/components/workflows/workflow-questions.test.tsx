@@ -2,7 +2,7 @@
 // https://screenpipe.com
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkflowQuestions } from "../../../../packages/workflows-ui/src/workflow-questions";
 import { readWorkflowAnswers, writeWorkflowAnswers } from "../../../../packages/workflows-ui/src/workflow-answers";
 import type { QuestionnaireVoice, VoiceState } from "../../../../packages/workflows-ui/src/questionnaire-voice";
@@ -14,6 +14,8 @@ vi.mock("../../../../packages/workflows-ui/src/questionnaire-voice", async origi
 } }));
 import { fixtureWorkflowAnalysis } from "@screenpipe/workflows-ui/fixture";
 const question = "Who reviews the synthesis?";
+// Unsaved answers are kept per task for the session; each test starts without one.
+beforeEach(() => sessionStorage.clear());
 const workflow = { ...fixtureWorkflowAnalysis.analysis.workflows[0], id: "wf-review", revision: 4, userCorrection: "Keep the reviewed step.", openQuestions: [question, question, "Where is it saved?"] };
 
 it.each([null, undefined, ""])("opens and saves answers when the catalog correction is %s", async userCorrection => {

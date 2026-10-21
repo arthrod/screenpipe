@@ -63,6 +63,7 @@ import remarkGfm from "remark-gfm";
 import posthog from "posthog-js";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { PipesSection } from "@/components/settings/pipes-section";
+import { FlowsTab } from "@/components/automation-flows/flows-tab";
 import { NotificationBell } from "@/components/notification-bell";
 import { ChatPrefillData } from "@/lib/chat-utils";
 import { useFeedbackStore } from "@/lib/stores/feedback-store";
@@ -334,6 +335,8 @@ function getPipeStoreList(data: unknown): any[] {
   return list;
 }
 
+type PipesTab = "discover" | "my-pipes" | "flows";
+
 export function PipeStoreView() {
 
   const ui = useGT();
@@ -350,20 +353,58 @@ export function PipeStoreView() {
       .catch(() => setInstalledCount(0));
   }, []);
 
-  const [activeTab, setActiveTab] = useState<"discover" | "my-pipes">("my-pipes");
+  const [activeTab, setActiveTab] = useState<PipesTab>("my-pipes");
+  // Automation Flows are addressable: ?tab=flows&flow=<id> stays in the URL
+  // while the Flows tab is shown.
+  const [flowId, setFlowId] = useState<string | null>(null);
+  const [flowVisit, setFlowVisit] = useState(0);
+
+  const showFlows = useCallback((flow: string | null) => {
+    setActiveTab("flows");
+    setFlowId(flow);
+    // Each navigation is an explicit load, even to the Flow already on
+    // screen (the chat's Review Screen link after a change): Activer then
+    // publishes the version shown.
+    setFlowVisit((visit) => visit + 1);
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", "flows");
+    if (flow) params.set("flow", flow);
+    else params.delete("flow");
+    window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+  }, []);
+
+  const selectTab = useCallback(
+    (tab: PipesTab) => {
+      if (tab === "flows") return showFlows(null);
+      setActiveTab(tab);
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab") !== "flows") return;
+      params.delete("tab");
+      params.delete("flow");
+      window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+    },
+    [showFlows]
+  );
 
   // listen for tab switch events from empty state button
   useEventListener("switch-pipes-tab", (e) => {
-    setActiveTab((e as CustomEvent<{ tab: "discover" | "my-pipes" }>).detail.tab);
+    const detail = (e as CustomEvent<{ tab: PipesTab; flow?: string }>).detail;
+    if (detail.tab === "flows") showFlows(detail.flow ?? null);
+    else selectTab(detail.tab);
   });
 
   // Read ?tab= from URL after mount, then strip it so it doesn't persist
+  // (except the Flows tab, which keeps its address)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
     if (tab === "discover") setActiveTab("discover");
     else if (tab === "my-pipes") setActiveTab("my-pipes");
-    if (tab) {
+    else if (tab === "flows") {
+      setActiveTab("flows");
+      setFlowId(params.get("flow"));
+    }
+    if (tab && tab !== "flows") {
       params.delete("tab");
       window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
     }
@@ -380,6 +421,7 @@ export function PipeStoreView() {
   const tabs = [
     { key: "my-pipes" as const, label: ui("My tasks") },
     { key: "discover" as const, label: ui("Discover") },
+    { key: "flows" as const, label: ui("Flows") },
   ];
 
   return (
@@ -387,7 +429,9 @@ export function PipeStoreView() {
       <p className="text-sm text-muted-foreground">
         {activeTab === "discover"
           ? ui("Browse, install, and review community automations")
-          : ui("Run tasks on a schedule, after meetings, or when events happen.")}
+          : activeTab === "flows"
+            ? ui("Automations screenpipe built from work you repeat. Nothing runs until you turn it on.")
+            : ui("Run tasks on a schedule, after meetings, or when events happen.")}
       </p>
 
       {/* Tab bar */}
@@ -396,7 +440,7 @@ export function PipeStoreView() {
           <button
             key={key}
             data-testid={`tab-${key}`}
-            onClick={() => setActiveTab(key)}
+            onClick={() => selectTab(key)}
             className={cn(
               "-mb-px flex items-center border-b-2 text-sm font-medium transition-colors duration-150",
               activeTab === key
@@ -417,6 +461,8 @@ export function PipeStoreView() {
       {/* Tab content */}
       {activeTab === "discover" ? (
         <DiscoverView onInstalled={() => setActiveTab("my-pipes")} />
+      ) : activeTab === "flows" ? (
+        <FlowsTab key={flowVisit} flowId={flowId} onSelectFlow={showFlows} />
       ) : (
         <PipesSection />
       )}

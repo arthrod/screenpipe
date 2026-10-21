@@ -83,6 +83,7 @@ import { ImageViewerDialog } from "@/components/chat/standalone/image-viewer-dia
 import { StandaloneChatHeader } from "@/components/chat/standalone/standalone-chat-header";
 import { ChatMainPane } from "@/components/chat/standalone/chat-main-pane";
 import { ChatComposer } from "@/components/chat/standalone/chat-composer";
+import { withCreationPrompt } from "@/components/automation-flows/api";
 import { appendSelectedTextToComposer } from "@/components/chat/standalone/selected-text-actions";
 import { useChatScroll } from "@/components/chat/standalone/hooks/use-chat-scroll";
 import { useChatConnections } from "@/components/chat/standalone/hooks/use-chat-connections";
@@ -333,6 +334,19 @@ export function StandaloneChat({
     },
     [inputRef, setInput],
   );
+  // « Create flow » on the home cards: the composer starts with the
+  // `automation-flows` skill prompt (what was typed stays as the
+  // description); the user completes it and sends it.
+  const startFlowCreation = useCallback(() => {
+    setHomeCardPromptPreview(null);
+    pendingContextualHomeSuggestionRef.current = null;
+    const next = withCreationPrompt(inputValueRef.current);
+    setInput(next);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.length, next.length);
+    });
+  }, [inputRef, inputValueRef, setInput]);
   useEffect(() => {
     if (!input.trim()) {
       pendingContextualHomeSuggestionRef.current = null;
@@ -2466,6 +2480,7 @@ export function StandaloneChat({
             });
           },
           customTemplates,
+          onCreateFlow: startFlowCreation,
           onSaveCustomTemplate: saveCustomTemplate,
           onUpdateCustomTemplate: updateCustomTemplate,
           onDeleteCustomTemplate: deleteCustomTemplate,

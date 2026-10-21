@@ -97,6 +97,23 @@ it("reasserts resolved access after the engine restarts and stops on unmount", a
   } finally { vi.useRealTimers(); }
 });
 
+it("opens Workflows without the flag only when the local build sets the override to 1", async () => {
+  try {
+    for (const value of ["", "0", "true"]) {
+      vi.stubEnv("NEXT_PUBLIC_SCREENPIPE_WORKFLOWS_ROLLOUT", value);
+      expect(isWorkflowsRolloutEnabled(false)).toBe(false);
+    }
+    vi.stubEnv("NEXT_PUBLIC_SCREENPIPE_WORKFLOWS_ROLLOUT", "1");
+    for (const flag of [undefined, false]) expect(isWorkflowsRolloutEnabled(flag)).toBe(true);
+    state.flag = false;
+    render(<ProductSwitcher mode="screenpipe" onChange={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Switch workspace" })).toBeVisible();
+    render(<WorkflowsRolloutSync />);
+    await waitFor(() => expect(state.fetch).toHaveBeenCalled());
+    expect(JSON.parse(state.fetch.mock.calls.at(-1)![1].body)).toEqual({ enabled: true });
+  } finally { vi.unstubAllEnvs(); }
+});
+
 it("resynchronizes immediately when a slow backend becomes reachable", async () => {
   state.flag = true;
   state.fetch.mockRejectedValueOnce(new Error("connection refused"));

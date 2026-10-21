@@ -1,9 +1,20 @@
 {
   "identifier": "migrated",
-  "description": "permissions that were migrated from v1",
+  "description": "app-window permissions: granted only to genuine first-party app webviews (WebviewUrl::App labels). The agent-owned browser (owned-browser, owned-browser-tab-*) and every other external-origin webview get nothing: on Windows WebView2, a foreign page can iframe http://tauri.localhost/ and speak IPC under its host webview's label, so the sensitive fs/shell/http grants must never ride a windows glob that matches those labels (see lib/__tests__/webview-capability-windows.test.ts)",
   "local": true,
   "windows": [
-    "*"
+    "main",
+    "main-window",
+    "home",
+    "search",
+    "onboarding",
+    "chat",
+    "permission-recovery",
+    "viewer-*",
+    "shortcut-reminder",
+    "notification-inbox",
+    "notification-panel",
+    "starred-sessions"
   ],
   "permissions": [
     "core:event:allow-listen",

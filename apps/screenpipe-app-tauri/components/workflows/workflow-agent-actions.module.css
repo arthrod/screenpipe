@@ -7,3 +7,7 @@
 .menu { width: 180px; padding: 7px; border: 1px solid #dedfd8; border-radius: 6px; background: #fff; color: #30302b; box-shadow: 0 3px 10px #0000000c; }
 .item { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 8px; font-size: 13px; cursor: pointer; }
 .item img { width: 16px; height: 16px; object-fit: contain; }
+/* Dark theme: the trigger sits in the workflows palette; the menu is portaled, so it reads the app tokens. */
+:global(.dark) .trigger { color: var(--muted); }
+:global(.dark) .trigger:hover, :global(.dark) .trigger[data-state="open"] { background: var(--soft); color: var(--ink); }
+:global(.dark) .menu { border-color: hsl(var(--border)); background: hsl(var(--popover)); color: hsl(var(--popover-foreground)); box-shadow: 0 3px 10px #0000004d; }

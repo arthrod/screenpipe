@@ -14,6 +14,7 @@ import { listen } from "@tauri-apps/api/event";
 import { showNotificationPanel } from "@/lib/hooks/use-notification-panel";
 import { showChatWithPrefill } from "@/lib/chat-utils";
 import { localFetch, isLocalApiUrl } from "@/lib/api";
+import { notificationApiHeaders } from "@/components/automation-flows/api";
 import { routeNotificationDeeplink } from "@/lib/notifications/actions";
 import {
   notificationActionAnalyticsProperties,
@@ -254,7 +255,7 @@ const NotificationHandler: React.FC = () => {
           }
           const res = await localFetch(action.url, {
             method: action.method || "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: await notificationApiHeaders(action.url),
             body: action.body ? JSON.stringify(action.body) : undefined,
           });
           // The "+ HD" action calls /capture/hd/start, which is otherwise

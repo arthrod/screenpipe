@@ -1,0 +1,625 @@
+<title>Prototype Recommendations SAV</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<!-- screenpipe — AI that knows everything you've seen, said, or heard -->
+<!-- https://screenpipe.com -->
+<!--
+  THROWAWAY PROTOTYPE: reference mockup for the review screen, not production code.
+  Standalone HTML: open the file in a browser, nothing to install. State lives in memory.
+
+  What it shows (chosen after 13 design iterations):
+    - "Automation created" notification in the screenpipe pop-up style (Open / Later);
+    - Automations tab > Recommendations: rows grouped by state (Waiting for you, Running,
+      Dismissed), with the My tasks status square;
+    - review page: title, where it was learned from, status, VIEW GRAPH / TURN ON, one sentence
+      + 3 checks summarising what it automates, the questions the AI could not settle
+      (TURN ON stays disabled until they are answered; "Other answer…" opens a free-text field),
+      and the rules, collapsed;
+    - running state: PAUSE and an empty Activity list (real runs come from n8n).
+  Visual language copied from the real app (My tasks, Discover): Inter for text, uppercase mono
+  buttons, uppercase section labels, 1 px borders.
+
+  Test controls: the bottom bar ("Simulate") triggers the notification and resets the state;
+  ◐ switches light / dark. No demo emails are included.
+  Data in the page (rules, questions, 7-email score) is scripted for the demo.
+-->
+<style>
+/* Layout: screenpipe Automations tab; single-column review page with a short summary under the title. */
+:root {
+  --background: 60 14% 96%;
+  --foreground: 0 0% 4%;
+  --card: 0 0% 100%;
+  --muted: 60 11% 92%;
+  --accent: 60 11% 93%;
+  --muted-foreground: 0 0% 40%;
+  --border: 60 9% 86%;
+  --primary: 0 0% 4%;
+  --primary-foreground: 0 0% 100%;
+  --sidebar-background: 60 11% 93%;
+  --sidebar-accent: 60 9% 89%;
+  --phosphor: 77 100% 62%;
+  --phosphor-mark: 77 90% 30%;
+  --radius: 8px;
+  --proto-bg: 0 0% 9%;
+  --proto-fg: 0 0% 96%;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "IBM Plex Mono", ui-monospace, monospace;
+  --font-notif: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: 0 0% 4%; --foreground: 0 0% 96%; --card: 0 0% 5%; --muted: 0 0% 12%; --accent: 0 0% 13%;
+    --muted-foreground: 0 0% 62%; --border: 0 0% 18%; --primary: 0 0% 96%; --primary-foreground: 0 0% 4%;
+    --sidebar-background: 0 0% 7%; --sidebar-accent: 0 0% 11%; --phosphor-mark: 77 100% 62%;
+    --proto-bg: 0 0% 96%; --proto-fg: 0 0% 6%;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --background: 0 0% 4%; --foreground: 0 0% 96%; --card: 0 0% 5%; --muted: 0 0% 12%; --accent: 0 0% 13%;
+  --muted-foreground: 0 0% 62%; --border: 0 0% 18%; --primary: 0 0% 96%; --primary-foreground: 0 0% 4%;
+  --sidebar-background: 0 0% 7%; --sidebar-accent: 0 0% 11%; --phosphor-mark: 77 100% 62%;
+  --proto-bg: 0 0% 96%; --proto-fg: 0 0% 6%;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: hsl(var(--background)); color: hsl(var(--foreground));
+  font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px 140px;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 1px solid hsl(var(--foreground)); outline-offset: 2px; }
+p { margin: 0; }
+
+.proto-banner { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.03em; border: 1px dashed hsl(var(--border)); border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; color: hsl(var(--muted-foreground)); display: flex; gap: 8px; flex-wrap: wrap; }
+.proto-banner b { color: hsl(var(--foreground)); font-weight: 500; }
+
+/* app shell */
+.app { display: grid; grid-template-columns: 220px minmax(0, 1fr); border: 1px solid hsl(var(--border)); border-radius: var(--radius); overflow: hidden; background: hsl(var(--background)); min-height: 680px; }
+.sidebar { background: hsl(var(--sidebar-background)); border-right: 1px solid hsl(var(--border)); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
+.sb-head { display: flex; align-items: center; gap: 10px; padding: 6px 10px 18px; font-size: 18px; font-weight: 500; }
+.sb-head svg { width: 20px; height: 20px; }
+.sb-head .chev { margin-left: auto; color: hsl(var(--muted-foreground)); }
+.sb-head .chev svg { width: 16px; height: 16px; }
+.nav-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; font-size: 14px; color: hsl(var(--foreground) / 0.8); border: 1px solid transparent; background: none; text-align: left; width: 100%; }
+.nav-item svg { width: 16px; height: 16px; flex: none; }
+.nav-item:hover { background: hsl(var(--sidebar-accent)); }
+.nav-item.on { background: hsl(var(--sidebar-accent)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+.nav-item.on::before { content: ""; position: absolute; left: -1px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: hsl(var(--foreground)); }
+.sb-foot { margin-top: auto; border-top: 1px solid hsl(var(--border)); padding-top: 10px; }
+.brand-mark { width: 16px; height: 16px; border-radius: 4px; background: hsl(var(--foreground)); position: relative; flex: none; display: inline-block; }
+.brand-mark::after { content: ""; position: absolute; inset: 4px; border-radius: 1px; background: hsl(var(--background)); }
+.main { padding: 28px 40px 48px; min-width: 0; }
+.page-sub { font-size: 15px; color: hsl(var(--muted-foreground)); margin: 0 0 18px; }
+.tabbar { display: flex; align-items: stretch; height: 44px; gap: 28px; border-bottom: 1px solid hsl(var(--border)); margin-bottom: 24px; overflow-x: auto; }
+.tab { margin-bottom: -1px; display: flex; align-items: center; gap: 8px; border: 0; border-bottom: 2px solid transparent; background: none; font-size: 15px; color: hsl(var(--muted-foreground)); padding: 0; white-space: nowrap; }
+.tab:hover { color: hsl(var(--foreground)); }
+.tab.on { border-bottom-color: hsl(var(--foreground)); color: hsl(var(--foreground)); }
+.tab .count { font-family: var(--font-mono); font-size: 11px; background: hsl(var(--foreground)); color: hsl(var(--background)); border-radius: 999px; padding: 0 6px; }
+.tabbar .bell { margin-left: auto; display: flex; align-items: center; color: hsl(var(--muted-foreground)); }
+.tabbar .bell svg { width: 18px; height: 18px; }
+
+/* buttons (mono, uppercase, letter-spaced) */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 6px; border: 1px solid transparent; background: none; font-family: var(--font-mono); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; transition: all 0.15s; }
+.btn svg { width: 15px; height: 15px; flex: none; }
+.btn-lg { height: 42px; padding: 0 18px; font-size: 13px; }
+.btn-sm { height: 30px; padding: 0 10px; font-size: 11px; }
+.btn-sm svg { width: 13px; height: 13px; }
+.btn-default { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: hsl(var(--primary)); }
+.btn-default:hover { background: hsl(var(--background)); color: hsl(var(--primary)); }
+.btn-outline { border-color: hsl(var(--foreground) / 0.7); background: transparent; }
+.btn-outline:hover { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+.btn-ghost { color: hsl(var(--muted-foreground)); }
+.btn-ghost:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+.btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.btn-default[disabled]:hover { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.link { background: none; border: 0; padding: 0; font-size: 14px; color: hsl(var(--muted-foreground)); text-decoration: underline; text-underline-offset: 4px; }
+.link:hover { color: hsl(var(--foreground)); }
+.pill { font-family: var(--font-sans); font-size: 14px; line-height: 1.4; padding: 8px 14px; border-radius: 6px; background: hsl(var(--muted)); color: hsl(var(--foreground) / 0.85); border: 1px solid transparent; text-align: left; }
+.pill:hover { border-color: hsl(var(--foreground) / 0.45); }
+.pill[aria-pressed="true"] { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+
+/* list: rows grouped by state */
+.stack { display: grid; gap: 28px; max-width: 1000px; }
+.sec { display: grid; gap: 12px; }
+.section-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--muted-foreground)); min-height: 30px; }
+.section-label .n { font-family: var(--font-mono); letter-spacing: 0; margin-left: 8px; }
+.recs { border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--card)); }
+.rec { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 18px; align-items: center; width: 100%; padding: 16px 20px; border: 0; background: none; text-align: left; transition: background 0.15s; }
+.rec + .rec { border-top: 1px solid hsl(var(--border)); }
+button.rec:hover { background: hsl(var(--accent) / 0.5); }
+.rec-name { display: block; font-size: 16px; font-weight: 500; }
+.rec-sub { display: block; font-size: 14px; color: hsl(var(--muted-foreground)); margin-top: 2px; }
+.rec-status { font-family: var(--font-mono); font-size: 12px; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.rec.dim { opacity: 0.55; }
+
+/* review page */
+.col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 30px; max-width: 1000px; }
+.back { border: 0; background: none; padding: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 15px; color: hsl(var(--muted-foreground)); justify-self: start; }
+.back:hover { color: hsl(var(--foreground)); }
+.back svg { width: 16px; height: 16px; }
+.hero { display: flex; gap: 20px; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; }
+.hero-main { flex: 1 1 300px; min-width: 0; display: grid; gap: 8px; justify-items: start; }
+.hero-main .apps { margin-bottom: 8px; }
+.h-title { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; line-height: 1.2; }
+.h-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; color: hsl(var(--muted-foreground)); }
+.dotsep { color: hsl(var(--muted-foreground) / 0.5); }
+.hero-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.state { display: inline-flex; align-items: center; gap: 8px; }
+.sq { width: 9px; height: 9px; border: 1px solid hsl(var(--muted-foreground) / 0.6); flex: none; }
+.sq.live { background: hsl(var(--phosphor)); border-color: hsl(var(--phosphor-mark)); }
+.panel { border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--card)); padding: 24px 28px; }
+.panel.flush { padding: 0; }
+.banner { border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 16px 20px; background: hsl(var(--card)); display: grid; gap: 6px; justify-items: start; }
+.banner-t { font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.banner-t svg { width: 17px; height: 17px; }
+.banner-b { font-size: 14px; color: hsl(var(--muted-foreground)); line-height: 1.6; }
+.banner .btn { margin-top: 8px; }
+.k { font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+.flow-note { font-size: 14px; color: hsl(var(--muted-foreground)); line-height: 1.6; }
+
+/* summary: one sentence + 3 checks */
+.lead { font-size: 18px; line-height: 1.5; }
+.ticks { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 15px; }
+.ticks span { display: inline-flex; align-items: center; gap: 8px; }
+.ticks svg { width: 17px; height: 17px; }
+
+/* questions in an emphasised frame */
+.attn { border: 1px solid hsl(var(--foreground) / 0.75); border-radius: 8px; background: hsl(var(--muted) / 0.35); padding: 22px 24px; display: grid; gap: 18px; }
+.attn.done { border-color: hsl(var(--border)); background: hsl(var(--card)); }
+.attn-t { font-size: 17px; font-weight: 600; }
+.attn-s { font-size: 14px; color: hsl(var(--muted-foreground)); margin-top: 4px; line-height: 1.6; }
+.q-item { display: grid; gap: 10px; padding: 20px 0; }
+.q-item:first-child { padding-top: 0; }
+.q-item:last-child { padding-bottom: 0; }
+.q-item + .q-item { border-top: 1px solid hsl(var(--border)); }
+.q-label { font-size: 12px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+.q-text { font-size: 17px; font-weight: 600; line-height: 1.45; }
+.q-quote { font-size: 14px; color: hsl(var(--muted-foreground)); line-height: 1.6; }
+.choices { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.free { display: grid; gap: 10px; margin-top: 4px; }
+.textarea { width: 100%; min-height: 84px; resize: vertical; border: 1px solid hsl(var(--border)); border-radius: 6px; background: hsl(var(--background)); padding: 12px 14px; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: inherit; }
+.textarea:focus-visible { outline: none; border-color: hsl(var(--foreground)); }
+.textarea::placeholder { color: hsl(var(--muted-foreground)); }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.q-done { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 15px; }
+.q-done svg { width: 18px; height: 18px; flex: none; }
+.q-done .txt { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+
+/* rules and runs */
+.acc-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 20px; background: none; border: 0; font-size: 15px; text-align: left; }
+.acc-head svg { width: 16px; height: 16px; color: hsl(var(--muted-foreground)); transition: transform 0.15s; }
+.acc-head[aria-expanded="true"] svg { transform: rotate(180deg); }
+.rule { display: flex; justify-content: space-between; gap: 16px; padding: 12px 20px; border-top: 1px solid hsl(var(--border)); font-size: 14px; }
+.rule .then { font-weight: 500; text-align: right; }
+.from-you { font-family: var(--font-mono); font-size: 11px; border: 1px solid hsl(var(--border)); border-radius: 4px; padding: 1px 6px; margin-left: 8px; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.run { display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 14px 20px; border-top: 1px solid hsl(var(--border)); }
+.run:first-child { border-top: 0; }
+.run .sq { background: hsl(var(--foreground)); border-color: hsl(var(--foreground)); }
+.run-s { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-r { font-family: var(--font-mono); font-size: 12px; color: hsl(var(--muted-foreground)); margin-top: 3px; }
+.run.cancelled .sq { background: transparent; border-color: hsl(var(--muted-foreground) / 0.6); }
+.run.cancelled .run-s, .run.cancelled .run-r { text-decoration: line-through; color: hsl(var(--muted-foreground)); }
+.empty { padding: 32px 20px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 14px; }
+.placeholder { border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 24px; color: hsl(var(--muted-foreground)); }
+
+/* "View graph" dialog */
+.overlay { position: fixed; inset: 0; background: hsl(0 0% 0% / 0.5); display: grid; place-items: center; z-index: 70; padding: 16px; }
+.modal { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 22px 24px; display: grid; gap: 16px; background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 8px; box-shadow: 0 10px 30px hsl(0 0% 0% / 0.2); }
+.modal h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.gflow { display: grid; justify-items: center; }
+.gstep { width: 100%; max-width: 360px; padding: 10px 14px; border: 1px solid hsl(var(--border)); border-radius: 6px; background: hsl(var(--background)); font-size: 14px; text-align: center; display: grid; gap: 2px; }
+.gstep small { font-size: 12px; color: hsl(var(--muted-foreground)); }
+.gstep.decision { border-style: dashed; }
+.garrow { width: 1px; height: 14px; background: hsl(var(--border)); }
+.gbranch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; max-width: 360px; }
+.modal .note { font-size: 13px; color: hsl(var(--muted-foreground)); }
+
+/* screenpipe pop-ups */
+.notifs { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 10px; z-index: 50; width: min(340px, calc(100vw - 32px)); }
+.notif { background: hsl(var(--background) / 0.96); border-radius: 8px; backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid hsl(var(--foreground) / 0.08); font-family: var(--font-notif); color: hsl(var(--foreground) / 0.8); overflow: hidden; position: relative; box-shadow: 0 4px 16px hsl(var(--foreground) / 0.12); animation: slideIn 0.15s ease-out; }
+@keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .notif { animation: none; } }
+.notif-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 0; }
+.notif-brand { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 500; letter-spacing: 0.05em; color: hsl(var(--foreground) / 0.4); }
+.notif-brand .brand-mark { width: 14px; height: 14px; border-radius: 3px; }
+.notif-brand .brand-mark::after { inset: 4px; }
+.notif-x { background: none; border: 0; width: 24px; height: 24px; border-radius: 4px; color: hsl(var(--foreground) / 0.35); font-size: 14px; line-height: 1; }
+.notif-body { padding: 8px 14px; }
+.notif-title { font-size: 12px; font-weight: 500; margin-bottom: 4px; color: hsl(var(--foreground) / 0.9); cursor: pointer; }
+.notif-md { font-size: 11px; line-height: 1.4; color: hsl(var(--foreground) / 0.5); }
+.notif-md strong { color: hsl(var(--foreground) / 0.9); font-weight: 500; }
+.notif-actions { display: flex; gap: 8px; padding: 0 14px 12px; }
+.notif-btn { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: hsl(var(--foreground) / 0.04); border: 1px solid hsl(var(--border)); border-radius: 6px; color: hsl(var(--foreground) / 0.8); padding: 6px 10px; font-size: 10px; line-height: 1.4; font-family: var(--font-notif); font-weight: 500; letter-spacing: 0.03em; }
+.notif-btn:hover { background: hsl(var(--foreground) / 0.08); }
+.notif-btn.primary { background: hsl(var(--foreground) / 0.88); color: hsl(var(--background)); }
+.notif-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: hsl(var(--foreground) / 0.05); }
+.notif-prog span { display: block; height: 100%; background: hsl(var(--foreground) / 0.2); }
+
+/* prototype bar (not part of the design) */
+.proto-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); z-index: 60; background: hsl(var(--proto-bg)); color: hsl(var(--proto-fg)); border-radius: 14px; box-shadow: 0 8px 24px hsl(0 0% 0% / 0.25); padding: 6px; display: grid; gap: 4px; width: max-content; max-width: calc(100vw - 32px); font-family: var(--font-mono); font-size: 12px; }
+.pb-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.pb-btn { background: hsl(var(--proto-fg) / 0.08); color: hsl(var(--proto-fg)); border: 0; border-radius: 9px; height: 30px; padding: 0 10px; font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+.pb-btn:hover { background: hsl(var(--proto-fg) / 0.16); }
+.pb-label { padding: 0 10px; min-width: 210px; text-align: center; font-weight: 500; }
+.pb-sep { width: 1px; height: 20px; background: hsl(var(--proto-fg) / 0.2); margin: 0 4px; }
+.pb-state { font-size: 11px; opacity: 0.7; text-align: center; padding: 0 8px 2px; }
+.pb-menu { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: hsl(var(--proto-bg)); border-radius: 12px; padding: 6px; display: grid; gap: 2px; min-width: 260px; box-shadow: 0 8px 24px hsl(0 0% 0% / 0.25); }
+.pb-menu button { text-align: left; background: none; border: 0; color: hsl(var(--proto-fg)); padding: 8px 10px; border-radius: 8px; font-family: var(--font-mono); font-size: 12px; }
+.pb-menu button:hover { background: hsl(var(--proto-fg) / 0.1); }
+.pb-menu small { display: block; opacity: 0.6; font-size: 11px; }
+.pb-flash { text-align: center; font-size: 11px; color: hsl(var(--phosphor)); padding: 0 8px; }
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid hsl(var(--border)); padding: 8px; }
+  .sb-head, .sb-foot { display: none; }
+  .nav-item { width: auto; white-space: nowrap; }
+  .nav-item.on::before { display: none; }
+  .main { padding: 20px 16px 40px; }
+  .panel { padding: 18px; }
+  .panel.flush { padding: 0; }
+  .attn { padding: 18px; }
+  .rec { grid-template-columns: auto minmax(0, 1fr); row-gap: 10px; padding: 14px 16px; }
+  .rec-status { grid-column: 2; white-space: normal; }
+  .rec > .btn { grid-column: 2; justify-self: start; }
+  .lead { font-size: 17px; }
+  .rule { flex-direction: column; gap: 2px; }
+  .rule .then { text-align: left; }
+  .pb-label { min-width: 0; }
+}
+</style>
+
+<div class="proto-banner"><b>PROTOTYPE</b><span>throwaway mockup · scripted data · not wired to the app · “Simulate” in the bottom bar shows the notification</span></div>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main" id="page"></main>
+</div>
+
+<div class="notifs" id="notifs" aria-live="polite"></div>
+<div id="modal"></div>
+<div class="proto-bar" id="protobar"></div>
+
+<script>
+/* ---------- icons (lucide paths) ---------- */
+const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICON = {
+  bubble: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  chev: svg('<path d="m6 9 6 6 6-6"/>'),
+  chevR: svg('<path d="m9 18 6-6-6-6"/>'),
+  chevL: svg('<path d="m15 18-6-6 6-6"/>'),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  meetings: svg('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/>'),
+  timeline: svg('<rect x="2" y="4" width="20" height="14" rx="2"/><path d="M10 8l5 3-5 3z"/><path d="M8 21h8"/>'),
+  activity: svg('<path d="M4 6h16M8 12h12M12 18h8M4 6v12"/>'),
+  automations: svg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>'),
+  connections: svg('<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/>'),
+  settings: svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>'),
+  bell: svg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/>'),
+  back: svg('<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>'),
+  arrow: svg('<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>'),
+  graph: svg('<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>'),
+  mail: svg('<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>'),
+  ticket: svg('<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2M13 17v2M13 11v2"/>'),
+  flag: svg('<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><path d="M4 22v-7"/>'),
+  user: svg('<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
+  reply: svg('<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>'),
+  corner: svg('<polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>'),
+  check: svg('<path d="M20 6 9 17l-5-5"/>'),
+  sheet: svg('<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M8 13h8M8 17h8"/>'),
+  cloud: svg('<path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>'),
+  circleCheck: svg('<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>'),
+  play: svg('<polygon points="6 3 20 12 6 21 6 3" fill="currentColor"/>'),
+  power: svg('<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/>'),
+  pause: svg('<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>'),
+  x: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
+};
+
+/* ---------- scripted demo data ---------- */
+const LEVELS = ['Minor', 'Major', 'Blocker'];
+const PAST = [
+  { id: 'p1', base: 'Major', you: 'Major', from: 'Client A' },
+  { id: 'p2', base: 'Blocker', you: 'Blocker', from: 'Client A' },
+  { id: 'p3', base: 'Minor', you: 'Major', from: 'Key account' },
+  { id: 'p4', base: 'Blocker', you: 'Blocker', from: 'Client B' },
+  { id: 'p5', base: 'Minor', you: 'Major', from: 'Client B', deadlineH: 40 },
+  { id: 'p6', nb: true, you: 'Not a bug', from: 'Client C' },
+  { id: 'p7', base: 'Minor', you: 'Major', from: 'Client D', team: true },
+];
+const QSUB = 'Each case came up only once in your emails, so screenpipe has no rule for it yet.';
+const Q = {
+  deadline: {
+    q: 'When a customer mentions a deadline, should the ticket be more urgent?',
+    quote: 'You did it once, Oct 15: “Elle a une démo vendredi, je le passe en majeur”',
+    choices: [['Yes, if the deadline is within 48 h', 48], ['Only within 24 h', 24], ['No, ignore deadlines', 0]],
+    placeholder: 'e.g. Only for key clients, and only if the deadline is this week',
+  },
+  slow: {
+    q: 'You made “Le tableau de bord met 30 s à charger” a Major, but the rules said Minor. Why?',
+    quote: 'Email from Client D, Oct 16',
+    choices: [['A whole team was blocked', 0], ['Client D is a key client', 1], ['My mistake, Minor was right', 2]],
+    placeholder: 'e.g. Slow pages are Major when more than 10 people use them',
+  },
+};
+const DONE = {
+  deadline: (v) => (v ? `A deadline within ${v} h makes it one level more urgent` : 'Deadlines do not change the priority'),
+  slow: (v) => ['A whole team blocked makes it one level more urgent', 'Client D counts as a key client', 'Slow pages stay Minor'][v],
+};
+const VARIANTS = [
+  { key: 'a', label: 'Review screen' },
+];
+
+/* ---------- state ---------- */
+function fresh(prev) {
+  return {
+    variant: prev ? prev.variant : 'a', nav: 'automations', tab: 'recommendations', view: 'list', step: 0,
+    running: false, deadline: null, slow: null, custom: { deadline: '', slow: '' }, writing: null, draft: { deadline: '', slow: '' },
+    rulesOpen: false, graph: false, runs: [], notifs: [], menu: false, flash: '',
+  };
+}
+let S = fresh();
+
+/* ---------- logic ---------- */
+const pending = () => (S.deadline === null ? 1 : 0) + (S.slow === null ? 1 : 0);
+const hasCustom = () => S.deadline === 'custom' || S.slow === 'custom';
+const deadlineH = () => (typeof S.deadline === 'number' ? S.deadline : 0);
+const keyClients = () => (S.slow === 1 ? ['Key account', 'Client D'] : ['Key account']);
+function predict(p) {
+  if (p.nb) return 'Not a bug';
+  let i = LEVELS.indexOf(p.base);
+  if (keyClients().includes(p.from)) i++;
+  if (p.deadlineH && deadlineH() && p.deadlineH <= deadlineH()) i++;
+  if (p.team && S.slow === 0) i++;
+  return LEVELS[Math.min(2, i)];
+}
+const score = () => PAST.filter((p) => predict(p) === p.you || (p.id === 'p7' && S.slow === 2)).length;
+const scoreText = () => `On your last 7 emails, it made the same choices as you ${score()} times out of 7.${hasCustom() ? ' Your own answers apply to new emails.' : ''}`;
+
+/* ---------- helpers ---------- */
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+const now = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+
+/* ---------- shared pieces ---------- */
+const stateTag = () => `<span class="state"><span class="sq ${S.running ? 'live' : ''}"></span>${S.running ? 'Running' : 'Not running yet'}</span>`;
+const graphBtn = (cls) => `<button class="btn ${cls}" data-act="graph">${ICON.graph}View graph</button>`;
+const sec = (label, body, right) => `<section class="sec"><div class="section-label"><span>${label}</span>${right || ''}</div>${body}</section>`;
+const backLink = () => `<button class="back" data-act="to-list">${ICON.back}Back to recommendations</button>`;
+
+function statusLine() {
+  const n = pending();
+  const t = S.running ? (S.runs.length ? `${plural(S.runs.length, 'email')} handled` : 'Waiting for the next support email') : n ? `${plural(n, 'question')} to answer` : 'Ready to turn on';
+  return `<div class="h-meta">${stateTag()}<span class="dotsep">·</span><span>${t}</span></div>`;
+}
+function heroActions() {
+  return S.running
+    ? `${graphBtn('btn-outline btn-lg')}<button class="btn btn-outline btn-lg" data-act="pause">${ICON.pause}Pause</button>`
+    : `${graphBtn('btn-outline btn-lg')}<button class="btn btn-default btn-lg" data-act="turn-on" ${pending() ? 'disabled' : ''}>${ICON.power}Turn on</button>`;
+}
+function readyBanner() {
+  if (S.running || pending()) return '';
+  return `<div class="banner"><div class="banner-t">${ICON.circleCheck}Ready to turn on</div><div class="banner-b">${scoreText()}</div><button class="btn btn-default" data-act="turn-on">${ICON.power}Turn on</button></div>`;
+}
+
+/* ---------- summary: one sentence + 3 checks ---------- */
+function summary() {
+  return `<div style="display:grid;gap:12px"><p class="lead">Turns each support email into a Jira ticket.</p>
+    <div class="ticks"><span>${ICON.check}Priority set</span><span>${ICON.check}Developer assigned</span><span>${ICON.check}Reply drafted, not sent</span></div></div>`;
+}
+
+/* one question: answer pills, "Other answer…" with a free-text field, or an "answered" line */
+function questionItem(kind, idx) {
+  const label = `<div class="q-label">Question ${idx} of 2</div>`;
+  const v = S[kind];
+  if (v !== null) {
+    const txt = v === 'custom' ? `Your answer: “${esc(S.custom[kind])}”` : DONE[kind](v);
+    return `<div class="q-item">${label}<div class="q-done">${ICON.circleCheck}<span class="txt">${txt}</span><button class="link" data-act="reask" data-k="${kind}">Change</button></div></div>`;
+  }
+  const q = Q[kind];
+  const open = S.writing === kind;
+  return `<div class="q-item">${label}<div class="q-text">${esc(q.q)}</div><div class="q-quote">${esc(q.quote)}</div>
+    <div class="choices">${q.choices.map(([l, val]) => `<button class="pill" data-act="answer" data-k="${kind}" data-v="${val}">${esc(l)}</button>`).join('')}<button class="pill" data-act="free-open" data-k="${kind}" aria-pressed="${open}">Other answer…</button></div>
+    ${open ? `<div class="free"><label class="q-label" for="free-${kind}">Your answer, in your own words</label><textarea id="free-${kind}" class="textarea" data-free="${kind}" rows="3" placeholder="${esc(q.placeholder)}">${esc(S.draft[kind])}</textarea><div class="row"><button class="btn btn-default btn-sm" data-act="free-save" data-k="${kind}">Save answer</button><button class="btn btn-ghost btn-sm" data-act="free-cancel">Cancel</button></div></div>` : ''}
+  </div>`;
+}
+function attn() {
+  const n = pending();
+  return `<div class="attn ${n ? '' : 'done'}">
+    <div><div class="attn-t">${n ? `${plural(n, 'question')} before it can run` : 'Your answers'}</div><div class="attn-s">${QSUB}</div></div>
+    <div>${questionItem('deadline', 1)}${questionItem('slow', 2)}</div>
+  </div>`;
+}
+
+function rulesRows() {
+  const rows = [
+    ['Login, payment or lost data', 'Blocker, fixed within 24 h'],
+    ['A main feature is broken', 'Major, within 3 days'],
+    ['Anything else', 'Minor, within 2 weeks'],
+    [`The customer is a key client${S.slow === 1 ? ' (incl. Client D)' : ''}`, 'one level more urgent', true],
+  ];
+  if (deadlineH()) rows.push([`A deadline within ${deadlineH()} h`, 'one level more urgent', true]);
+  if (S.slow === 0) rows.push(['A whole team is blocked', 'one level more urgent', true]);
+  if (S.deadline === 'custom') rows.push([`Deadlines: “${S.custom.deadline}”`, 'as you wrote it', true]);
+  if (S.slow === 'custom') rows.push([`Slow pages: “${S.custom.slow}”`, 'as you wrote it', true]);
+  rows.push(['Already reported', 'comment on the open ticket'], ['A question, not a bug', 'label it in Gmail, no ticket'], ['Interface · server · payment', 'Front · Back · Payment dev']);
+  return rows.map(([a, b, you]) => `<div class="rule"><span>${esc(a)}${you ? '<span class="from-you">from you</span>' : ''}</span><span class="then">${esc(b)}</span></div>`);
+}
+function rulesAccordion() {
+  const rows = rulesRows();
+  return `<div class="panel flush"><button class="acc-head" data-act="rules" aria-expanded="${S.rulesOpen}"><span>The ${rows.length} rules it follows${pending() ? ` · ${pending()} more after your answers` : ''}</span>${ICON.chev}</button>${S.rulesOpen ? rows.join('') : ''}</div>`;
+}
+function runsList() {
+  if (!S.runs.length) return `<div class="panel flush"><div class="empty">Nothing yet. Each new support email will show up here.</div></div>`;
+  return `<div class="panel flush">${S.runs.map((r) => `<div class="run ${r.cancelled ? 'cancelled' : ''}"><span class="sq"></span><div style="min-width:0"><div class="run-s">${esc(r.subj)}</div><div class="run-r">${esc(r.result)} · ${r.time}</div></div><span>${r.key && !r.cancelled ? `<button class="btn btn-ghost btn-sm" data-act="undo-run" data-id="${r.id}">Undo</button>` : ''}</span></div>`).join('')}</div>`;
+}
+
+/* ---------- list: rows grouped by state ---------- */
+function listView() {
+  const n = pending();
+  const triage = `<button class="rec" data-act="open"><span class="sq ${S.running ? 'live' : ''}"></span><span style="min-width:0"><span class="rec-name">Support email triage</span><span class="rec-sub">Learned from 7 emails you handled · Oct 14–16</span></span><span class="rec-status">${S.running ? stateTag() : n ? `${plural(n, 'question')} to answer` : 'ready to turn on'}</span><span class="btn ${S.running ? 'btn-outline' : 'btn-default'} btn-sm">${S.running ? 'Open' : 'Review'}</span></button>`;
+  const csv = `<div class="rec dim"><span class="sq"></span><span style="min-width:0"><span class="rec-name">Weekly CSV export to Drive</span><span class="rec-sub">You said no on Oct 12</span></span><span class="rec-status"></span><span></span></div>`;
+  return `<div class="stack">
+    ${sec(`${S.running ? 'Running' : 'Waiting for you'}<span class="n">1</span>`, `<div class="recs">${triage}</div>`)}
+    ${sec('Dismissed<span class="n">1</span>', `<div class="recs">${csv}</div>`)}
+  </div>`;
+}
+
+/* ---------- review page ---------- */
+function detail() {
+  return `<div class="col">${backLink()}
+    <div class="hero"><div class="hero-main"><h2 class="h-title">Support email triage</h2><div class="h-meta">Learned from 7 emails you handled, Oct 14–16</div>${statusLine()}</div><div class="hero-actions">${heroActions()}</div></div>
+    ${summary()}
+    ${S.running ? sec('Activity', runsList()) : attn() + readyBanner()}
+    ${sec('Rules', rulesAccordion())}
+  </div>`;
+}
+
+/* ---------- "View graph" ---------- */
+function graphModal() {
+  if (!S.graph) return '';
+  const dl = S.deadline === null ? 'deadline soon? waiting for your answer' : S.deadline === 'custom' ? 'deadline: your own answer' : S.deadline ? `deadline within ${S.deadline} h → one level more urgent` : 'deadlines: no change';
+  return `<div class="overlay" data-act="close-graph"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="g-title" data-stop>
+    <div class="row" style="justify-content:space-between"><h3 id="g-title">How it works, step by step</h3><button class="btn btn-ghost btn-sm" data-act="close-graph" aria-label="Close">${ICON.x}</button></div>
+    <div class="gflow">
+      <div class="gstep">New email in the support inbox<small>checked every minute</small></div><div class="garrow"></div>
+      <div class="gstep">Read the email<small>what is broken, who sent it, any deadline</small></div><div class="garrow"></div>
+      <div class="gstep decision">Is it a bug?<small>no: label it in Gmail and stop</small></div><div class="garrow"></div>
+      <div class="gstep">Set the priority<small>key client → one level more urgent · ${esc(dl)}</small></div><div class="garrow"></div>
+      <div class="gstep decision">Already reported?</div><div class="garrow"></div>
+      <div class="gbranch"><div class="gstep">Yes<small>comment on that ticket</small></div><div class="gstep">No<small>create the ticket, assign the developer</small></div></div><div class="garrow"></div>
+      <div class="gstep">Draft a reply, tell you<small>the reply is never sent on its own</small></div>
+    </div>
+    <p class="note">In the app, this opens the full editable diagram.</p>
+  </div></div>`;
+}
+
+/* ---------- page and shell ---------- */
+function page() {
+  if (S.nav !== 'automations') return `<p class="page-sub">Existing screenpipe section, not part of this prototype.</p>`;
+  const sub = S.tab === 'recommendations' ? 'Automations screenpipe built from work you repeat. Nothing runs until you turn it on.' : S.tab === 'discover' ? 'Browse, install, and review community automations' : 'Run tasks on a schedule, after meetings, or when events happen.';
+  const tabs = `<div class="tabbar" role="tablist"><button class="tab ${S.tab === 'mytasks' ? 'on' : ''}" data-act="tab" data-tab="mytasks">My tasks</button><button class="tab ${S.tab === 'discover' ? 'on' : ''}" data-act="tab" data-tab="discover">Discover</button><button class="tab ${S.tab === 'recommendations' ? 'on' : ''}" data-act="tab" data-tab="recommendations">Recommendations${!S.running ? ' <span class="count">1</span>' : ''}</button><span class="bell">${ICON.bell}</span></div>`;
+  let content;
+  if (S.tab !== 'recommendations') content = `<div class="placeholder">Existing screen, not part of this prototype.</div>`;
+  else if (S.view === 'list') content = listView();
+  else content = detail();
+  return `<p class="page-sub">${sub}</p>${tabs}${content}`;
+}
+function sidebar() {
+  const items = [['chat', 'plus', 'Chat'], ['meetings', 'meetings', 'Meetings'], ['timeline', 'timeline', 'Timeline'], ['activity', 'activity', 'Activity'], ['automations', 'automations', 'Automations'], ['connections', 'connections', 'Connections']];
+  return `<div class="sb-head">${ICON.bubble}<span>Chat</span><span class="chev">${ICON.chev}</span></div>`
+    + items.map(([k, ic, l]) => `<button class="nav-item ${S.nav === k ? 'on' : ''}" data-act="nav" data-nav="${k}">${ICON[ic]}${l}</button>`).join('')
+    + `<div class="sb-foot"><button class="nav-item" data-act="nav" data-nav="settings">${ICON.settings}Settings</button></div>`;
+}
+
+/* ---------- pop-ups ---------- */
+let notifSeq = 0;
+function notify(n) { S.notifs.unshift({ id: ++notifSeq, left: 20000, hover: false, ...n }); S.notifs = S.notifs.slice(0, 3); renderNotifs(); }
+function renderNotifs() {
+  document.getElementById('notifs').innerHTML = S.notifs.map((n) => `<div class="notif" data-notif="${n.id}" role="status">
+    <div class="notif-head"><span class="notif-brand"><span class="brand-mark"></span>screenpipe</span><button class="notif-x" aria-label="Dismiss notification" data-act="notif-x" data-n="${n.id}">✕</button></div>
+    <div class="notif-body"><div class="notif-title" data-act="notif-act" data-n="${n.id}" data-a="0">${esc(n.title)}</div><div class="notif-md">${md(n.body)}</div></div>
+    <div class="notif-actions">${n.actions.map((a, i) => `<button class="notif-btn ${a.primary ? 'primary' : ''}" data-act="notif-act" data-n="${n.id}" data-a="${i}">${esc(a.label)}</button>`).join('')}</div>
+    <div class="notif-prog"><span style="width:${(n.left / 20000) * 100}%"></span></div></div>`).join('');
+}
+setInterval(() => {
+  const before = S.notifs.length;
+  S.notifs.forEach((n) => { if (!n.hover) n.left -= 100; });
+  S.notifs = S.notifs.filter((n) => n.left > 0);
+  if (before !== S.notifs.length) { renderNotifs(); return; }
+  document.querySelectorAll('.notif').forEach((el) => { const n = S.notifs.find((x) => x.id === Number(el.dataset.notif)); if (n) el.querySelector('.notif-prog span').style.width = (n.left / 20000) * 100 + '%'; });
+}, 100);
+const notifsEl = document.getElementById('notifs');
+notifsEl.addEventListener('mouseover', (e) => { const el = e.target.closest('.notif'); const n = el && S.notifs.find((x) => x.id === Number(el.dataset.notif)); if (n) n.hover = true; });
+notifsEl.addEventListener('mouseout', (e) => { const el = e.target.closest('.notif'); if (el && !el.contains(e.relatedTarget)) { const n = S.notifs.find((x) => x.id === Number(el.dataset.notif)); if (n) n.hover = false; } });
+function popupFound() {
+  notify({ title: 'New automation: support email triage', body: `Created from **7 emails** you handled. ${pending() ? `**${plural(pending(), 'question')}** to answer before it runs.` : 'Ready to turn on.'}`,
+    actions: [{ label: 'Open', primary: true, run: openDetail }, { label: 'Later', run: () => flash('Later: it stays in Recommendations') }] });
+}
+function openDetail() { S.nav = 'automations'; S.tab = 'recommendations'; S.view = 'detail'; render(); }
+
+/* ---------- runs: empty here, real ones come from n8n ---------- */
+function undoRun(id) { const r = S.runs.find((x) => x.id === id); if (r && r.key) { r.cancelled = true; flash(`${r.key} removed from Jira`); render(); } }
+
+/* ---------- prototype bar (test controls) ---------- */
+let flashTimer;
+function flash(msg) { S.flash = msg; renderBar(); clearTimeout(flashTimer); flashTimer = setTimeout(() => { S.flash = ''; renderBar(); }, 3200); }
+function renderBar() {
+  const v = VARIANTS.find((x) => x.key === S.variant);
+  const state = `${S.running ? 'running' : 'created, off'} · ${plural(pending(), 'question')} left · Turn on ${!S.running && pending() ? 'blocked' : 'allowed'} · score ${score()}/7`;
+  document.getElementById('protobar').innerHTML = `
+    ${S.menu ? `<div class="pb-menu" role="menu">
+      <button data-act="sim-found">Show the notification<small>“New automation” pop-up, screenpipe style</small></button>
+      <button data-act="sim-reset">Reset everything</button></div>` : ''}
+    <div class="pb-row">${VARIANTS.length > 1 ? `<button class="pb-btn" data-act="var-prev" aria-label="Previous version">←</button><span class="pb-label">${v.label}</span><button class="pb-btn" data-act="var-next" aria-label="Next version">→</button>` : `<span class="pb-label">${v.label}</span>`}<span class="pb-sep"></span><button class="pb-btn" data-act="menu" aria-expanded="${S.menu}">Simulate ▾</button><button class="pb-btn" data-act="theme" aria-label="Switch theme">◐</button></div>
+    ${S.flash ? `<div class="pb-flash">${esc(S.flash)}</div>` : `<div class="pb-state">${esc(state)}</div>`}`;
+}
+function setVariant(k) { S.variant = k; S.menu = false; try { history.replaceState(null, '', '#variant-' + k); } catch (e) { /* ignored */ } render(); }
+function cycle(d) { const i = VARIANTS.findIndex((x) => x.key === S.variant); setVariant(VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].key); }
+
+/* ---------- rendering and events ---------- */
+function render() {
+  document.getElementById('sidebar').innerHTML = sidebar();
+  document.getElementById('page').innerHTML = page();
+  document.getElementById('modal').innerHTML = graphModal();
+  renderBar();
+}
+function turnOn() { if (!pending()) { S.running = true; S.writing = null; flash('Running: watching the support inbox'); render(); } }
+function saveFree(kind) {
+  const text = (S.draft[kind] || '').trim();
+  if (!text) { flash('Write an answer before saving'); document.getElementById('free-' + kind)?.focus(); return; }
+  S.custom[kind] = text; S[kind] = 'custom'; S.writing = null; render();
+}
+document.addEventListener('input', (e) => { const k = e.target.dataset && e.target.dataset.free; if (k) S.draft[k] = e.target.value; });
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) { if (S.menu && !e.target.closest('#protobar')) { S.menu = false; renderBar(); } return; }
+  if (el.dataset.act === 'close-graph' && e.target.closest('[data-stop]') && !e.target.closest('button')) return;
+  const k = el.dataset.k;
+  switch (el.dataset.act) {
+    case 'nav': S.nav = el.dataset.nav; render(); break;
+    case 'tab': S.tab = el.dataset.tab; S.view = 'list'; render(); break;
+    case 'open': openDetail(); break;
+    case 'to-list': S.view = 'list'; render(); break;
+    case 'rules': S.rulesOpen = !S.rulesOpen; render(); break;
+    case 'answer': S[k] = Number(el.dataset.v); if (S.writing === k) S.writing = null; render(); break;
+    case 'free-open': S.writing = S.writing === k ? null : k; if (S.writing && !S.draft[k] && S.custom[k]) S.draft[k] = S.custom[k]; render(); document.getElementById('free-' + k)?.focus(); break;
+    case 'free-save': saveFree(k); break;
+    case 'free-cancel': S.writing = null; render(); break;
+    case 'reask': S[k] = null; if (S.custom[k]) { S.draft[k] = S.custom[k]; S.writing = k; } render(); if (S.writing) document.getElementById('free-' + k)?.focus(); break;
+    case 'turn-on': turnOn(); break;
+    case 'pause': S.running = false; flash('Paused'); render(); break;
+    case 'graph': S.graph = true; render(); document.querySelector('.modal button')?.focus(); break;
+    case 'close-graph': S.graph = false; render(); break;
+    case 'undo-run': undoRun(Number(el.dataset.id)); break;
+    case 'notif-x': S.notifs = S.notifs.filter((n) => n.id !== Number(el.dataset.n)); renderNotifs(); break;
+    case 'notif-act': { const n = S.notifs.find((x) => x.id === Number(el.dataset.n)); if (!n) break; S.notifs = S.notifs.filter((x) => x !== n); renderNotifs(); n.actions[Number(el.dataset.a)].run(); break; }
+    case 'var-prev': cycle(-1); break;
+    case 'var-next': cycle(1); break;
+    case 'menu': S.menu = !S.menu; renderBar(); break;
+    case 'sim-found': S.menu = false; popupFound(); renderBar(); break;
+    case 'sim-reset': S = fresh(S); renderNotifs(); render(); flash('Reset'); break;
+    case 'theme': { const root = document.documentElement; const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; root.dataset.theme = dark ? 'light' : 'dark'; break; }
+  }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && S.graph) { S.graph = false; render(); return; }
+  const a = document.activeElement;
+  if (S.graph || (a && (/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable))) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+/* ---------- start ---------- */
+const m = (location.hash || '').match(/variant-([a-z])/);
+if (m && VARIANTS.some((x) => x.key === m[1])) S.variant = m[1];
+render();
+setTimeout(popupFound, 900);
+</script>

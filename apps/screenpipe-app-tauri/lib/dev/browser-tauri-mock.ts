@@ -17,6 +17,7 @@ import type {
 } from "@/lib/utils/tauri";
 import type { BrowserDevScenario } from "./browser-engine-mock";
 import { buildProviderErrorPresentation } from "../chat/provider-errors";
+import { BROWSER_MOCK_FLOW_ACTIVATION_KEY } from "@/components/automation-flows/mock";
 
 export type BrowserDevMode = "mock" | "live";
 
@@ -877,6 +878,10 @@ export function createBrowserIpcMock(options: BrowserIpcMockOptions) {
           port: options.apiPort,
           auth_enabled: options.mode === "live" && Boolean(options.apiKey),
         };
+      case "get_flow_activation_key":
+        // The live engine checks the desktop app's own key, which a browser
+        // never has: activation is refused there, as expected (ticket 14).
+        return options.mode === "mock" ? BROWSER_MOCK_FLOW_ACTIVATION_KEY : null;
       case "get_screenpipe_base_dir":
         return "/Users/screenpipe/.screenpipe";
       case "get_chats_dir":

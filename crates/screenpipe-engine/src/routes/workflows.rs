@@ -38,7 +38,7 @@ pub fn workflow_id(workflow: &Value) -> String {
     format!("wf-{:x}", Sha256::digest(identity.to_string().as_bytes()))
 }
 
-pub(super) async fn read_catalog(source: &WorkflowCatalogSource) -> Result<Value, ApiError> {
+pub(crate) async fn read_catalog(source: &WorkflowCatalogSource) -> Result<Value, ApiError> {
     let dir = source.0.as_ref().ok_or_else(|| {
         error(
             StatusCode::SERVICE_UNAVAILABLE,

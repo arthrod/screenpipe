@@ -13,9 +13,9 @@ import { msg, useMessages } from "gt-react";
 import { localizeDefinitions } from "@/lib/i18n/definitions";
 
 
-export type ThinkingLevel = "low" | "medium" | "high";
+export type ThinkingLevel = "low" | "medium" | "high" | "max";
 
-const VALID_LEVELS: readonly ThinkingLevel[] = ["low", "medium", "high"] as const;
+const VALID_LEVELS: readonly ThinkingLevel[] = ["low", "medium", "high", "max"] as const;
 
 interface ThinkingLevelOption {
   value: ThinkingLevel;
@@ -26,6 +26,8 @@ const THINKING_LEVELS: ThinkingLevelOption[] = [
   { value: "low",    label: msg("Low", {}) },
   { value: "medium", label: msg("Medium", {}) },
   { value: "high",   label: msg("High", {}) },
+  // Pi clamps it to the model's highest effort when the model has no "max".
+  { value: "max",    label: msg("Max", {}) },
 ];
 
 function isValidLevel(v: string): v is ThinkingLevel {

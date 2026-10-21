@@ -7,6 +7,7 @@ import { MotionConfig } from "framer-motion";
 import { getVersion } from "@tauri-apps/api/app";
 import posthog from "posthog-js";
 import { WorkflowsRolloutSync } from "@/components/workflows/rollout-sync";
+import { DemoShortcutListener } from "@/components/automation-flows/demo-shortcut-listener";
 import { PostHogProvider } from "posthog-js/react";
 import { useEffect, useState, Suspense } from "react";
 import { ChangelogDialogProvider } from "@/lib/hooks/use-changelog-dialog";
@@ -196,6 +197,7 @@ export const Providers = forwardRef<
                               {!isOverlay && <LiveViewOnboardingFollowUp />}
                               {!isOverlay && <BackgroundPipeAllowanceNotifier />}
                               {!isOverlay && <WorkflowsRolloutSync />}
+                              {!isOverlay && <DemoShortcutListener />}
                               {children}
                             </PermissionMonitorProvider>
                           </AppEntitlementGate>

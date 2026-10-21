@@ -1,19 +1,45 @@
 /* screenpipe — AI that knows everything you've seen, said, or heard */
 /* https://screenpipe.com */
-.evidence { margin: 12px 0 4px; min-width: 0; }
+.evidence { --evidence-frame: 220px; margin: 12px 0 4px; min-width: 0; }
 .previewStatus { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 16px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); font-size: 12px; }
 .previewStatus button { text-decoration: underline; }
+
+/* Authored image list (editor): every capture at full width, selectable. */
 .figure { position: relative; max-width: 100%; margin: 0 0 20px; }
 .figure .imageButton { display: block; padding: 0; position: relative; width: 100%; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--soft); cursor: pointer; }
 .imageButton img { display: block; width: 100%; height: auto; object-fit: contain; }
 .figure figcaption { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; line-height: 1.5; color: var(--muted); }
+
+/* Review carousel (read view): one capture at a time, at a fixed height and
+   its own width (no empty bands beside it); Enlarge shows it at full width. */
+.carousel { position: relative; width: fit-content; max-width: 100%; min-width: 0; margin: 0 0 20px; border-radius: 6px; }
+.carousel.carouselExpanded { width: auto; }
+/* The navigation shares the caption row: the caption keeps room for it. */
+.paged figcaption { min-height: 32px; padding-right: 104px; }
+.carousel:focus-visible { outline: 1px solid var(--ink); outline-offset: 4px; }
+.carousel .figure { margin: 0; }
+.carousel .figure .imageButton { height: var(--evidence-frame); width: fit-content; cursor: zoom-in; }
+.carousel .figure.expanded .imageButton { width: 100%; height: auto; cursor: zoom-out; }
+.carousel .imageButton img { width: auto; max-width: 100%; height: 100%; }
+.carousel .expanded .imageButton img { width: 100%; height: auto; }
+/* Loading or missing capture: a 16:9 placeholder of the frame's height. */
+.figure .frameStatus { box-sizing: border-box; width: calc(var(--evidence-frame) * 16 / 9); max-width: 100%; height: var(--evidence-frame); margin-bottom: 0; justify-content: center; align-content: center; background: var(--soft); }
+.zoom { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; padding: 6px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; opacity: 0; }
+.imageButton:hover .zoom, .imageButton:focus-visible .zoom { opacity: 1; }
+.carousel .figure figcaption { margin-top: 4px; }
+
 .figure figcaption > span { min-width: 0; overflow-wrap: anywhere; }
+.carouselNav { position: absolute; right: 0; bottom: 0; display: flex; align-items: center; height: 32px; gap: 2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.carouselNav > span { min-width: 34px; text-align: center; }
+.carouselNav > button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.carouselNav > button:hover { background: var(--soft); color: var(--ink); }
+.carouselNav > button:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .links { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 12px; font-size: 11px; color: var(--muted); }
 .links > button { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0; font-size: 11px; }
 .player { position: relative; padding-top: 22px; scroll-margin-top: 80px; }
 .player > section { margin: 0 0 8px; border-radius: 6px; }
 .player .close { position: absolute; right: 0; top: -6px; }
-@media (max-width: 560px) { .figure { max-width: 100%; } }
+@media (max-width: 560px) { .evidence { --evidence-frame: 180px; } }
 
 /* Reveal playback without competing with the step. */
 @media (prefers-reduced-motion: no-preference) {
@@ -23,11 +49,13 @@
 
 
 .evidence .recording { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 4px; color: var(--muted); flex-shrink: 0; }
+.evidence .recording.labelled { width: auto; gap: 6px; padding: 0 8px; font-size: 11px; white-space: nowrap; }
 .evidence .recording:hover { background: var(--soft); color: var(--ink); }
 .evidence .recording:focus-visible { outline: 1px solid var(--ink); outline-offset: 2px; }
 .evidence .recording:disabled { opacity: .5; }
-@media (pointer: coarse) { .evidence .recording { width: 44px; height: 44px; } }
+@media (pointer: coarse) { .evidence .recording, .carouselNav > button { width: 44px; height: 44px; } }
 
+/* Authored image selection and actions. */
 .selected .imageButton { outline: 2px solid var(--ink); outline-offset: 2px; }
 .imageActions { position: absolute; top: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; max-width: calc(100% - 16px); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 2px 8px #0002; }
 .imageActions button { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 8px; font: inherit; font-size: 12px; }

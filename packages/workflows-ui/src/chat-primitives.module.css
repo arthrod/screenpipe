@@ -26,4 +26,4 @@
 .jump[data-visible="true"] { pointer-events: auto; }
 .jump:hover { background: var(--chat-soft, #f6f6f3); }
 .jump:focus-visible { outline: 1px solid currentColor; outline-offset: 3px; }
-:global(.dark) .jumpAnchor { --chat-line: #44443f; --chat-ink: #e6e6df; --chat-surface: #20211e; --chat-soft: #30312e; }
+:global(.dark) .jumpAnchor { --chat-line: hsl(var(--border)); --chat-ink: hsl(var(--foreground)); --chat-surface: hsl(var(--card)); --chat-soft: hsl(var(--surface-secondary)); }

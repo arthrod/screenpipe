@@ -43,6 +43,7 @@ pub(crate) const LOG_FILTER: &str = "info,hyper=error,tower_http=error,whisper_r
 
 mod activity_history;
 mod app_panic;
+mod automation_flows;
 mod first_run_summary;
 mod analytics;
 mod auth_session;

@@ -285,6 +285,11 @@ pub fn candidates(
         .into_iter()
         .flatten()
         .filter_map(|workflow| {
+            // Demo provenance (`demo: true`, installed by the scripted demo
+            // installer) never enters the genuine review-notification loop.
+            if workflow["demo"] == true {
+                return None;
+            }
             let id = screenpipe_engine::routes::workflows::workflow_id(workflow);
             if !valid_id(&id) {
                 return None;
@@ -469,6 +474,20 @@ mod tests {
         assert_eq!(read_ledger(&path).unwrap().workflows.len(), 1);
         std::fs::write(&path, "broken").unwrap();
         assert!(read_ledger(&path).is_err());
+    }
+    #[test]
+    fn demo_marked_tasks_never_fire_the_review_notification() {
+        let mut c = catalog();
+        c["analysis"]["workflows"][0]["demo"] = json!(true);
+        assert!(
+            candidates(&payload(), &c, &Ledger::default()).is_empty(),
+            "a demo-marked task must not enter the genuine review-notification loop"
+        );
+        c["analysis"]["workflows"][0]["demo"] = json!(false);
+        assert_eq!(
+            candidates(&payload(), &c, &Ledger::default()),
+            vec![("wf-one".into(), 1)]
+        );
     }
     #[test]
     fn agent_review_is_eligible_but_unknown_workflows_stay_quiet() {

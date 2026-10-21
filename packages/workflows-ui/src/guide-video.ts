@@ -31,8 +31,10 @@ function baseGuideVideoScenes(guide: WorkflowGuide, workflow: WorkflowMap): Guid
     const sourceStage = guideSourceStage(guide, step, workflow) ?? null;
     const image = guideScreenshot(workflow, sourceStage, step.imageReview);
     const include = guideStepIncludesImage(step) && image;
+    // Only recorder frames reference the loader; embedded captures render
+    // from their own pixels and both builders fall back to scene.image.
     add(`${index + 1}. ${step.title}`, [step.instruction,
-      step.expectedResult && `Expected result: ${step.expectedResult}`].filter(Boolean).join("\n"), include ? image.dataUrl || null : null, include ? image.frameId : undefined);
+      step.expectedResult && `Expected result: ${step.expectedResult}`].filter(Boolean).join("\n"), include ? image.dataUrl || null : null, include && image.frameId > 0 ? image.frameId : undefined);
     const scene = scenes[scenes.length - 1];
     scene.requiresImage = true;
     if (!image && guideStepIncludesImage(step) && !step.imageReview && sourceStage !== null) {

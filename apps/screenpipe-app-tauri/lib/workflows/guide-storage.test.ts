@@ -73,6 +73,20 @@ it("preserves unreadable drafts instead of replacing them", async () => {
   expect([...files.values()]).toEqual(["broken", "also broken"]);
 });
 
+it("round-trips a draft whose step picks an embedded screenshot", async () => {
+  const embedded = structuredClone(guide);
+  embedded.steps[0] = {
+    ...embedded.steps[0],
+    sourceStage: 0,
+    includeImage: true,
+    // Scripted fixtures carry negative frameIds paired with pixels in the
+    // workflow catalog; the draft must save and reload unchanged.
+    imageReview: { frameId: -1, timestamp: "2026-09-11T10:00:00Z" },
+  };
+  await saveGuideToDisk(embedded);
+  expect(await loadGuideFromDisk("research")).toEqual(embedded);
+});
+
 it("keeps screenshot review through disk validation and backup recovery", async () => {
   const reviewed = structuredClone(guide);
   reviewed.steps[0] = {

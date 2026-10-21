@@ -80,3 +80,50 @@ it("bounds parallel image requests and removes aborted work from the queue", asy
   expect(results[3]).toMatchObject({ name: "AbortError" });
   expect(create).not.toHaveBeenCalled();
 });
+
+// Upstream #7634 gates /search and frame media behind PII redaction: a 503
+// {code:"privacy_pending"} means "not yet", never "gone".
+const pending = () => Response.json(
+  { error: "Image privacy processing is pending", code: "privacy_pending", retryable: true },
+  { status: 503, headers: { "retry-after": "0" } });
+
+describe("privacy-pending answers (#7634)", () => {
+  it("retries a privacy-pending search and loads once redaction releases", async () => {
+    fetch.mockImplementationOnce(async () => pending())
+      .mockResolvedValueOnce(lookup())
+      .mockResolvedValueOnce(new Response("image", { headers: { "content-type": "image/jpeg" } }));
+    const image = await loadWorkflowScreenshot(timestamp, "Obsidian", new AbortController().signal);
+    expect(image).toMatchObject({ frameId: 42, dataUrl: "blob:source-preview" });
+    expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/search"))).toHaveLength(2);
+  });
+
+  it("retries a privacy-pending frame read and loads once redaction releases", async () => {
+    fetch.mockResolvedValueOnce(lookup())
+      .mockImplementationOnce(async () => pending())
+      .mockResolvedValueOnce(new Response("image", { headers: { "content-type": "image/jpeg" } }));
+    const image = await loadWorkflowScreenshot(timestamp, "Obsidian", new AbortController().signal);
+    expect(image).toMatchObject({ frameId: 42 });
+    expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/frames/42?"))).toHaveLength(2);
+  });
+
+  it("reports redaction still pending instead of claiming the screenshot is gone", async () => {
+    fetch.mockImplementation(async () => pending());
+    await expect(loadWorkflowScreenshot(timestamp, "Obsidian", new AbortController().signal)).rejects.toThrow(/redact|privacy/i);
+    await expect(loadWorkflowScreenshot(timestamp, "Obsidian", new AbortController().signal)).rejects.not.toThrow(/gone|no longer/);
+    // A bare 503 (busy limiter, no privacy marker) keeps failing fast.
+    fetch.mockReset();
+    fetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await expect(loadWorkflowScreenshot(timestamp, "Obsidian", new AbortController().signal)).rejects.toThrow("look up");
+  });
+
+  it("stops retrying when the caller aborts during the privacy wait", async () => {
+    const controller = new AbortController();
+    fetch.mockImplementation(async () => {
+      controller.abort();
+      return pending();
+    });
+    await expect(loadWorkflowScreenshot(timestamp, "Obsidian", controller.signal)).rejects.toThrow();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+  });
+});

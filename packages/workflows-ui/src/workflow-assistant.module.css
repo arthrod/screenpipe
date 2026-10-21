@@ -99,14 +99,14 @@
   .launcher, .launcher .launcherMark, .launcher > span { transition: none; }
   .launcher:active, .launcher:is(:hover, :focus-visible) .launcherMark { transform: none; }
 }
-:global(.dark) .launcher { background: #20221c; border-color: #3c3f36; color: #e6e7de; }
-:global(.dark) .launcher:hover { background: #2a2c25; border-color: #797b72; }
-:global(.dark) .launcher > span { background: #20221c; border-color: #3c3f36; color: #e6e7de; }
-:global(.dark) .launcher kbd { color: #a0a393; }
-:global(.dark) .panel { --chat-ink: #e6e7de; --chat-muted: #a0a393; --chat-line: #3c3f36; --chat-soft: #2a2c25; --chat-surface: #20221c; }
-:global(.dark) .context, :global(.dark) .empty button { color: #afb2a3; }
-:global(.dark) .send { background: #dfe2d5; color: #20221c; }
-:global(.dark) .send:disabled { background: #36392f; color: #767d68; }
+:global(.dark) .launcher { background: hsl(var(--card)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+:global(.dark) .launcher:hover { background: hsl(var(--surface-secondary)); border-color: hsl(var(--muted-foreground)); }
+:global(.dark) .launcher > span { background: hsl(var(--card)); border-color: hsl(var(--border)); color: hsl(var(--foreground)); }
+:global(.dark) .launcher kbd { color: hsl(var(--muted-foreground)); }
+:global(.dark) .panel { --chat-ink: hsl(var(--foreground)); --chat-muted: hsl(var(--muted-foreground)); --chat-line: hsl(var(--border)); --chat-soft: hsl(var(--surface-secondary)); --chat-surface: hsl(var(--card)); }
+:global(.dark) .context, :global(.dark) .empty button { color: hsl(var(--muted-foreground)); }
+:global(.dark) .send { background: hsl(var(--foreground)); color: hsl(var(--background)); }
+:global(.dark) .send:disabled { background: hsl(var(--surface-tertiary)); color: hsl(var(--muted-foreground)); }
 
 .feedbackActions { display: flex; justify-content: flex-end; padding: 8px 16px 0; }
 .feedbackActions button { padding: 7px 12px; border: 1px solid var(--chat-line); border-radius: 7px; background: var(--chat-soft); color: var(--chat-ink); font: inherit; font-size: 12px; cursor: pointer; }
