@@ -2811,7 +2811,8 @@ fn the_skill_worked_example_quotes_an_expression_the_shipped_workflow_holds() {
          in the shipped NovaDesk workflow"
     );
 
-    let body = shipped_novadesk_workflow()["nodes"]
+    let shipped = shipped_novadesk_workflow();
+    let body = shipped["nodes"]
         .as_array()
         .and_then(|nodes| {
             nodes
