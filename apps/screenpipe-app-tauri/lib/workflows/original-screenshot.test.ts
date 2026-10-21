@@ -20,7 +20,9 @@ describe("original screenshot loader under privacy gating", () => {
   it("loads the recorder-owned original frame", async () => {
     fetch.mockResolvedValueOnce(png());
     const blob = await loadOriginalWorkflowScreenshot(7, new AbortController().signal);
-    expect(blob).toBeInstanceOf(Blob);
+    // Realm-agnostic identity: jsdom's Blob global differs from the fetch
+    // implementation's realm in CI, so instanceof would false-fail there.
+    expect(blob.constructor.name).toBe("Blob");
     expect(blob.size).toBe(3);
     expect(blob.type).toBe("image/png");
     expect(fetch.mock.calls[0][0]).toBe("/frames/7?fallback=false");
