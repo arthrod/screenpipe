@@ -433,7 +433,9 @@ impl SCServer {
             advertise_mdns: should_advertise_mdns(addr),
             flow_activation_key: None,
             flow_running_wait: Default::default(),
-            flow_failure_reports: crate::automation_flows::FailureReports::for_api_port(addr.port()),
+            flow_failure_reports: crate::automation_flows::FailureReports::for_api_port(
+                addr.port(),
+            ),
             flow_health_schedule: Some(Default::default()),
         }
     }

@@ -153,7 +153,9 @@ mod tests {
     #[test]
     fn description_spells_the_brand_screenpipe() {
         // Shown in Connections → n8n (docs/DESIGN.md: "Screenpipe").
-        assert!(DEF.description.contains("let Screenpipe manage Automation Flows"));
+        assert!(DEF
+            .description
+            .contains("let Screenpipe manage Automation Flows"));
         assert!(!DEF.description.contains("ScreenPipe"));
     }
 

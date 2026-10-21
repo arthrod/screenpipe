@@ -76,7 +76,11 @@ impl Pacing {
         let HealthSchedule { every, retry } = self.schedule;
         if report.n8n == "unreachable" || report.pending.is_empty() {
             self.undelivered = None;
-            return if report.n8n == "unreachable" { retry } else { every };
+            return if report.n8n == "unreachable" {
+                retry
+            } else {
+                every
+            };
         }
         let delay = self
             .undelivered
@@ -558,7 +562,9 @@ mod tests {
         let mut missed = HealthReport::n8n(None, "reachable");
         missed.pending.push("exec-1".into());
 
-        let delays: Vec<u64> = (0..7).map(|_| pacing.next_delay(&missed).as_secs()).collect();
+        let delays: Vec<u64> = (0..7)
+            .map(|_| pacing.next_delay(&missed).as_secs())
+            .collect();
         assert_eq!(delays, [30, 60, 120, 240, 480, 900, 900]);
         // Delivered: back to the schedule, and a new miss starts over.
         assert_eq!(pacing.next_delay(&fine), Duration::from_secs(900));

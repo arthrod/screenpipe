@@ -904,7 +904,12 @@ impl N8nApi {
     /// does not archive it). Already gone counts as deleted.
     async fn delete_workflow(&self, workflow_id: &str) -> Result<(), FlowError> {
         let (status, value) = self
-            .send(Method::DELETE, &format!("/workflows/{workflow_id}"), &[], None)
+            .send(
+                Method::DELETE,
+                &format!("/workflows/{workflow_id}"),
+                &[],
+                None,
+            )
             .await?;
         match status {
             200..=299 | 404 => Ok(()),
@@ -1022,7 +1027,8 @@ fn keep_user_credentials(body: &mut Value, current: Option<&Value>) {
 /// wires the credentials ScreenPipe may wire ([`crate::flow_checks`]).
 async fn check_nodes(api: &N8nApi, body: &mut Value) -> Result<(), FlowError> {
     let credentials = api.credentials().await?;
-    check_and_wire(body, &credentials).map_err(|problems| FlowError::InvalidWorkflow(problems.join("; ")))
+    check_and_wire(body, &credentials)
+        .map_err(|problems| FlowError::InvalidWorkflow(problems.join("; ")))
 }
 
 /// Why a chat modification cannot be applied as is, if it cannot: it needs
@@ -1461,7 +1467,10 @@ async fn load_flow(state: &FlowsState, id: &str) -> Result<(N8nApi, FlowStore, V
 }
 
 /// [`load_flow`], drafts under construction included.
-async fn load_any_flow(state: &FlowsState, id: &str) -> Result<(N8nApi, FlowStore, Value), FlowError> {
+async fn load_any_flow(
+    state: &FlowsState,
+    id: &str,
+) -> Result<(N8nApi, FlowStore, Value), FlowError> {
     if !valid_workflow_id(id) {
         return Err(FlowError::FlowNotFound);
     }
@@ -1694,8 +1703,15 @@ async fn set_dismissed(
     // Repeated clicks change and log it once.
     if record.dismissed != dismissed {
         record.dismissed = dismissed;
-        let version = workflow["versionId"].as_str().unwrap_or_default().to_string();
-        record.log(if dismissed { "dismissed" } else { "restored" }, version, by);
+        let version = workflow["versionId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        record.log(
+            if dismissed { "dismissed" } else { "restored" },
+            version,
+            by,
+        );
         store.save(&state.screenpipe_dir)?;
     }
     Ok(Json(
@@ -1820,7 +1836,12 @@ fn check_draft(body: &mut Value, summary: &str, credentials: &[N8nCredential]) -
     let mut nodes = Vec::new();
     let mut problems = Vec::new();
     for node in &report.nodes {
-        let mut missing: Vec<String> = node.invention.iter().chain(&node.missing).cloned().collect();
+        let mut missing: Vec<String> = node
+            .invention
+            .iter()
+            .chain(&node.missing)
+            .cloned()
+            .collect();
         if without_notes.contains(&node.name) {
             missing.push(format!(
                 "« {} » has no one-sentence `notes` for the Review Screen",
@@ -1942,7 +1963,9 @@ async fn start_draft(
         .as_str()
         .is_none_or(|name| name.trim().is_empty())
     {
-        return Err(FlowError::InvalidWorkflow("the workflow needs a `name`".into()));
+        return Err(FlowError::InvalidWorkflow(
+            "the workflow needs a `name`".into(),
+        ));
     }
     // `importable` drops `active` and `tags`: n8n imports it switched off.
     let mut body = draft_body(&request.workflow);
@@ -1990,7 +2013,12 @@ async fn draft_state(
 ) -> Result<Json<Value>, FlowError> {
     let (api, store, workflow) = load_draft(&state, &id).await?;
     let credentials = api.credentials().await?;
-    Ok(Json(draft_view(&api, &workflow, store.flows.get(&id), &credentials)))
+    Ok(Json(draft_view(
+        &api,
+        &workflow,
+        store.flows.get(&id),
+        &credentials,
+    )))
 }
 
 /// `PUT /drafts/:id`: one step, the whole workflow as it now stands.
@@ -2016,7 +2044,12 @@ async fn update_draft(
             store.save(&state.screenpipe_dir)?;
         }
     }
-    Ok(Json(draft_view(&api, &workflow, store.flows.get(&id), &credentials)))
+    Ok(Json(draft_view(
+        &api,
+        &workflow,
+        store.flows.get(&id),
+        &credentials,
+    )))
 }
 
 /// `POST /drafts/:id/finish` (« Finish »): the full check; refused while
@@ -2278,7 +2311,9 @@ mod tests {
         // n8n answered without a status: `finished`/`stoppedAt` tell the rest.
         assert!(N8nApi::execution_is_running(&json!({"stoppedAt": null})));
         assert!(!N8nApi::execution_is_running(&json!({"finished": true})));
-        assert!(!N8nApi::execution_is_running(&json!({"stoppedAt": "2026-10-17T09:00:20.000Z"})));
+        assert!(!N8nApi::execution_is_running(
+            &json!({"stoppedAt": "2026-10-17T09:00:20.000Z"})
+        ));
     }
 
     #[test]

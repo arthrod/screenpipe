@@ -407,9 +407,7 @@ fn classify(status: reqwest::StatusCode, answer: &Value) -> Result<(), Undeliver
     if let Some(outcome) = answer["outcome"].as_str() {
         return match outcome {
             outcome::SHOWN => Ok(()),
-            outcome::DUPLICATE => Err(Undelivered::Gated(
-                message.unwrap_or(outcome).to_string(),
-            )),
+            outcome::DUPLICATE => Err(Undelivered::Gated(message.unwrap_or(outcome).to_string())),
             other => Err(suppressed(message.unwrap_or(other))),
         };
     }
@@ -476,7 +474,10 @@ mod tests {
         // without the machine-readable `outcome` field): pinned, so a
         // wording change there cannot silently reclassify a delivery here.
         assert!(matches!(
-            classify(OK, &json!({"success": true, "message": "Notification sent successfully"})),
+            classify(
+                OK,
+                &json!({"success": true, "message": "Notification sent successfully"})
+            ),
             Ok(())
         ));
         // Suppressions — quiet hours, snooze, master off, the pipe toggle,
@@ -488,7 +489,10 @@ mod tests {
             "pipe muted",
         ] {
             assert!(
-                matches!(classify(OK, &json!({"message": message})), Err(Undelivered::Suppressed(_))),
+                matches!(
+                    classify(OK, &json!({"message": message})),
+                    Err(Undelivered::Suppressed(_))
+                ),
                 "{message} must be retryable"
             );
         }
@@ -499,7 +503,10 @@ mod tests {
             "Notification already sent",
         ] {
             assert!(
-                matches!(classify(OK, &json!({"message": message})), Err(Undelivered::Gated(_))),
+                matches!(
+                    classify(OK, &json!({"message": message})),
+                    Err(Undelivered::Gated(_))
+                ),
                 "{message} must be terminal"
             );
         }
@@ -548,7 +555,10 @@ mod tests {
         // An outcome this engine does not know yet: retryable, never a
         // silent loss.
         assert!(matches!(
-            classify(OK, &json!({"message": "…", "outcome": "whatever the next app sends"})),
+            classify(
+                OK,
+                &json!({"message": "…", "outcome": "whatever the next app sends"})
+            ),
             Err(Undelivered::Suppressed(_))
         ));
         // A non-2xx answer is never a delivery, whatever it claims.
@@ -572,11 +582,19 @@ mod tests {
             trigger_key("wf1", Some("Invalid credentials (Failure)"))
         );
         assert_ne!(key, trigger_key("wf1", Some("IMAP server unreachable")));
-        assert_ne!(key, trigger_key("wf2", Some("Invalid credentials (Failure)")));
+        assert_ne!(
+            key,
+            trigger_key("wf2", Some("Invalid credentials (Failure)"))
+        );
         assert_eq!(trigger_key("wf1", Some("  ")), trigger_key("wf1", None));
         // The notice's id carries the same name, without the clock.
         let fingerprint = error_fingerprint(Some("Invalid credentials (Failure)"));
-        let notice = failure_notice("wf1", "Support", None, Some("Invalid credentials (Failure)"));
+        let notice = failure_notice(
+            "wf1",
+            "Support",
+            None,
+            Some("Invalid credentials (Failure)"),
+        );
         assert_eq!(
             notice["id"],
             format!("automation-flow-failure:wf1:trigger-{fingerprint}")

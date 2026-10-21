@@ -5149,7 +5149,10 @@ mod tests {
             "CUSTOM.screenPipeTrigger`",
             "CUSTOM.screenPipeAiTrigger`",
         ] {
-            assert!(skill.contains(node_type), "{node_type} missing from the skill");
+            assert!(
+                skill.contains(node_type),
+                "{node_type} missing from the skill"
+            );
         }
         assert!(!skill.contains("n8n-nodes-screenpipe.screenPipe"));
     }

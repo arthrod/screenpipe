@@ -404,7 +404,10 @@ impl Respond for FakeN8n {
                         // (edited since), never silently publishes a stale
                         // one.
                         let current = workflow["versionId"].as_str().unwrap_or_default();
-                        if body["versionId"].as_str().is_some_and(|version| version != current) {
+                        if body["versionId"]
+                            .as_str()
+                            .is_some_and(|version| version != current)
+                        {
                             let asked = body["versionId"].as_str().unwrap();
                             return json_response(
                                 409,
@@ -500,14 +503,20 @@ impl Respond for FakeN8n {
                     .and_then(|w| w["versionId"].as_str())
                     .map(str::to_string);
                 retried["workflowVersionId"] = if body["loadWorkflow"] == true {
-                    as_saved_now.map(|version| json!(version)).unwrap_or(Value::Null)
+                    as_saved_now
+                        .map(|version| json!(version))
+                        .unwrap_or(Value::Null)
                 } else {
                     original["workflowVersionId"].clone()
                 };
                 retried["startedAt"] = json!("2026-10-17T12:00:00.000Z");
                 retried["stoppedAt"] = json!("2026-10-17T12:00:09.000Z");
                 if retried["status"] == "success" {
-                    let original = state.executions.iter_mut().find(|e| e["id"] == *id).unwrap();
+                    let original = state
+                        .executions
+                        .iter_mut()
+                        .find(|e| e["id"] == *id)
+                        .unwrap();
                     original["retrySuccessId"] = json!(retry_id);
                 }
                 state.executions.insert(0, retried.clone());
@@ -1857,7 +1866,10 @@ async fn dismiss_sets_a_flow_aside_until_restored_and_never_hides_a_running_one(
         .call("GET", &format!("/automation-flows/{id}"), None)
         .await;
     assert_eq!(flow["status"], "active");
-    assert_eq!(events(&flow).last().unwrap(), &event("activated", "version-1", "user"));
+    assert_eq!(
+        events(&flow).last().unwrap(),
+        &event("activated", "version-1", "user")
+    );
 }
 
 #[tokio::test]
@@ -4206,7 +4218,11 @@ async fn a_failed_run_while_notifications_are_paused_is_delivered_once_the_pause
 
     let report = health_check(&app).await;
     assert_eq!(report["notified"], json!([]), "{report}");
-    assert_eq!(report["pendingNotifications"], json!(["exec-quiet"]), "{report}");
+    assert_eq!(
+        report["pendingNotifications"],
+        json!(["exec-quiet"]),
+        "{report}"
+    );
 
     // The pause lifts: the run is delivered at the next check, once.
     deliver_notifications(&app).await;
@@ -4788,7 +4804,10 @@ async fn each_step_is_accepted_half_built_and_the_state_says_what_each_node_lack
         missing(&state, "Chaque soir"),
         ["« Chaque soir » is connected to no other node"]
     );
-    assert!(state["problems"][0].as_str().unwrap().contains("`summary`"), "{state}");
+    assert!(
+        state["problems"][0].as_str().unwrap().contains("`summary`"),
+        "{state}"
+    );
 
     let (status, state) = draft_step(&app, &id, json!({"workflow": second_step()})).await;
 
@@ -4837,15 +4856,26 @@ async fn a_step_with_an_invented_or_switched_off_node_or_unknown_version_is_refu
     invented["nodes"][0]["type"] = json!("n8n-nodes-base.openTerminal");
     let (status, body) = start_draft(&app, invented).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body["detail"].as_str().unwrap().contains("not a node type this n8n has"));
+    assert!(body["detail"]
+        .as_str()
+        .unwrap()
+        .contains("not a node type this n8n has"));
     assert!(n8n.workflows().is_empty());
 
     let (_, state) = start_draft(&app, first_step()).await;
     let id = state["id"].as_str().unwrap().to_string();
     let writes = n8n_writes(&server).await.len();
     for (kind, version, refusal) in [
-        ("n8n-nodes-base.executeCommand", 1.0, "is switched off in this n8n"),
-        ("n8n-nodes-base.openTerminal", 1.0, "is not a node type this n8n has"),
+        (
+            "n8n-nodes-base.executeCommand",
+            1.0,
+            "is switched off in this n8n",
+        ),
+        (
+            "n8n-nodes-base.openTerminal",
+            1.0,
+            "is not a node type this n8n has",
+        ),
         ("n8n-nodes-base.httpRequest", 9.0, "has no version 9 here"),
     ] {
         let mut step = first_step();
@@ -4894,7 +4924,10 @@ async fn terminer_is_refused_while_anything_is_missing_and_lists_every_problem()
         assert!(detail.contains(problem), "{problem} not in {detail}");
     }
     // Still a hidden draft under construction.
-    assert_eq!(tag_names(&n8n.workflows()[0]), ["screenpipe-flow", BUILDING_TAG]);
+    assert_eq!(
+        tag_names(&n8n.workflows()[0]),
+        ["screenpipe-flow", BUILDING_TAG]
+    );
     assert_eq!(app.store()["flows"][&id]["building"], true);
     let (_, list) = app.call("GET", "/automation-flows", None).await;
     assert_eq!(list, json!([]));
@@ -4932,7 +4965,9 @@ async fn terminer_turns_a_complete_draft_into_a_switched_off_draft_to_review() {
     let (_, list) = app.call("GET", "/automation-flows", None).await;
     assert_eq!(list[0]["id"], id.as_str());
     assert_eq!(list[0]["status"], "draft");
-    let (status, _) = app.call("GET", &format!("/automation-flows/{id}"), None).await;
+    let (status, _) = app
+        .call("GET", &format!("/automation-flows/{id}"), None)
+        .await;
     assert_eq!(status, StatusCode::OK);
     let (status, body) = draft_step(&app, &id, json!({"workflow": chat_workflow()})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
@@ -4949,7 +4984,8 @@ async fn terminer_wires_a_credential_the_user_created_since_the_last_step() {
     workflow["nodes"][1] = second_step()["nodes"][1].clone();
     let (_, state) = start_draft(&app, workflow).await;
     let id = state["id"].as_str().unwrap().to_string();
-    assert!(missing(&state, "Préparer le résumé")[0].contains("`screenpipeApi` credential and n8n has none"));
+    assert!(missing(&state, "Préparer le résumé")[0]
+        .contains("`screenpipeApi` credential and n8n has none"));
 
     // The user creates the connection in n8n, then the chat finishes.
     n8n.hold_credentials(json!([{"id": "sp1", "name": "ScreenPipe API", "type": "screenpipeApi"}]));
@@ -5036,7 +5072,11 @@ async fn a_finished_draft_reports_its_failed_runs_like_any_flow() {
     assert_eq!(status, StatusCode::OK, "{flow}");
     let errors = n8n.error_workflows();
     assert_eq!(errors.len(), 1, "{errors:?}");
-    let draft = n8n.workflows().into_iter().find(|w| w["id"] == id.as_str()).unwrap();
+    let draft = n8n
+        .workflows()
+        .into_iter()
+        .find(|w| w["id"] == id.as_str())
+        .unwrap();
     assert_eq!(draft["settings"]["errorWorkflow"], errors[0]["id"]);
     assert_eq!(flow["versionId"], draft["versionId"]);
 }
@@ -5109,9 +5149,15 @@ async fn failed_runs_since_the_last_check_are_notified_once_each() {
         [format!("automation-flow-failure:{id}:exec-down")]
     );
     let body = sent[0]["body"].as_str().unwrap();
-    assert!(body.contains("Claire Martin <claire.martin@client.fr>"), "{body}");
+    assert!(
+        body.contains("Claire Martin <claire.martin@client.fr>"),
+        "{body}"
+    );
     assert!(body.contains("Create the Jira ticket"), "{body}");
-    assert_eq!(sent[0]["actions"][0]["url"], format!("screenpipe://flows/{id}"));
+    assert_eq!(
+        sent[0]["actions"][0]["url"],
+        format!("screenpipe://flows/{id}")
+    );
 
     // The next check finds nothing new: never twice.
     assert_eq!(health_check(&app).await["notified"], json!([]));
@@ -5123,7 +5169,11 @@ async fn failed_runs_since_the_last_check_are_notified_once_each() {
     assert_eq!(notifications(&app).await.len(), 2);
 
     // A check changes nothing in n8n: the Flow keeps running.
-    let flow = n8n.workflows().into_iter().find(|w| w["id"] == id.as_str()).unwrap();
+    let flow = n8n
+        .workflows()
+        .into_iter()
+        .find(|w| w["id"] == id.as_str())
+        .unwrap();
     assert_eq!(flow["active"], true);
 }
 
@@ -5236,7 +5286,10 @@ async fn a_check_waiting_to_clean_drafts_never_holds_up_a_reported_failure() {
     // The switch-off held the Flow writes for its whole 300 ms deadline.
     assert_eq!(switched, StatusCode::CONFLICT);
     assert_eq!(status, StatusCode::OK, "{answer}");
-    assert!(waited < Duration::from_millis(100), "the report waited {waited:?}");
+    assert!(
+        waited < Duration::from_millis(100),
+        "the report waited {waited:?}"
+    );
 }
 
 #[tokio::test]
@@ -5249,7 +5302,8 @@ async fn drafts_left_under_construction_for_24_hours_are_deleted() {
     let (_, recent) = start_draft(&app, first_step()).await;
     let recent = recent["id"].as_str().unwrap().to_string();
     let finished = active_flow(&app).await;
-    let ago = |hours: i64| json!((chrono::Utc::now() - chrono::Duration::hours(hours)).to_rfc3339());
+    let ago =
+        |hours: i64| json!((chrono::Utc::now() - chrono::Duration::hours(hours)).to_rfc3339());
     n8n.edit_workflow(&abandoned, |w| w["updatedAt"] = ago(25));
     n8n.edit_workflow(&recent, |w| w["updatedAt"] = ago(23));
     // A finished Flow untouched for days is not a draft: it stays.
@@ -5260,7 +5314,10 @@ async fn drafts_left_under_construction_for_24_hours_are_deleted() {
     assert_eq!(report["deletedDrafts"], json!([abandoned]), "{report}");
     let left: Vec<Value> = n8n.workflows().iter().map(|w| w["id"].clone()).collect();
     assert!(!left.contains(&json!(abandoned)), "{left:?}");
-    assert!(left.contains(&json!(recent)) && left.contains(&json!(finished)), "{left:?}");
+    assert!(
+        left.contains(&json!(recent)) && left.contains(&json!(finished)),
+        "{left:?}"
+    );
     let store = app.store();
     assert!(store["flows"].get(&abandoned).is_none(), "{store}");
     assert_eq!(store["flows"][&recent]["building"], true);
@@ -5458,7 +5515,10 @@ async fn only_a_failed_run_of_that_flow_is_retried() {
         "exec-ticket",
         &id,
         "2026-10-17T10:00:00.000Z",
-        ("Loris Omont <loris@novadesk.fr>", "NovaPay refuse les centimes"),
+        (
+            "Loris Omont <loris@novadesk.fr>",
+            "NovaPay refuse les centimes",
+        ),
         ai_answer("Bug", "high", "Un défaut de NovaPay."),
         &[],
     ));
@@ -5507,7 +5567,10 @@ async fn a_retry_n8n_refuses_is_reported_with_its_reason() {
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert_eq!(body["error"], "n8n_failed");
     assert!(
-        body["detail"].as_str().unwrap().contains("Could not find the node"),
+        body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Could not find the node"),
         "{body}"
     );
 }
@@ -5554,9 +5617,18 @@ async fn a_retry_never_runs_a_change_nobody_reviewed_or_published() {
     assert_eq!(
         sent,
         vec![
-            ("/api/v1/executions/exec-1/retry".to_string(), json!({"loadWorkflow": false})),
-            ("/api/v1/executions/exec-2/retry".to_string(), json!({"loadWorkflow": true})),
-            ("/api/v1/executions/exec-3/retry".to_string(), json!({"loadWorkflow": false})),
+            (
+                "/api/v1/executions/exec-1/retry".to_string(),
+                json!({"loadWorkflow": false})
+            ),
+            (
+                "/api/v1/executions/exec-2/retry".to_string(),
+                json!({"loadWorkflow": true})
+            ),
+            (
+                "/api/v1/executions/exec-3/retry".to_string(),
+                json!({"loadWorkflow": false})
+            ),
         ]
     );
 
@@ -5564,9 +5636,17 @@ async fn a_retry_never_runs_a_change_nobody_reviewed_or_published() {
     // which workflow version executed it — the one the failed run saved,
     // never the unreviewed chat edit or the unpublished n8n draft.
     let ran = |original: &str| n8n.retried_execution(original)["workflowVersionId"].clone();
-    assert_eq!(ran("exec-1"), json!("version-1"), "the chat edit must not run");
+    assert_eq!(
+        ran("exec-1"),
+        json!("version-1"),
+        "the chat edit must not run"
+    );
     assert_eq!(ran("exec-2"), json!("n8n-fix"), "the published fix runs");
-    assert_eq!(ran("exec-3"), json!("version-1"), "the n8n draft must not run");
+    assert_eq!(
+        ran("exec-3"),
+        json!("version-1"),
+        "the n8n draft must not run"
+    );
 }
 
 #[tokio::test]
@@ -5582,7 +5662,10 @@ async fn activity_offers_to_retry_only_failed_runs_not_retried_yet() {
         "exec-ticket",
         &id,
         "2026-10-17T10:00:00.000Z",
-        ("Loris Omont <loris@novadesk.fr>", "NovaPay refuse les centimes"),
+        (
+            "Loris Omont <loris@novadesk.fr>",
+            "NovaPay refuse les centimes",
+        ),
         ai_answer("Bug", "high", "Un défaut de NovaPay."),
         &[],
     ));
@@ -5612,5 +5695,8 @@ async fn activity_offers_to_retry_only_failed_runs_not_retried_yet() {
     assert_eq!(retried("exec-new"), false);
     assert_eq!(retried("exec-ticket"), false);
     // The run that failed again is the one to retry now.
-    assert_eq!(retried(failed_again["executionId"].as_str().unwrap()), false);
+    assert_eq!(
+        retried(failed_again["executionId"].as_str().unwrap()),
+        false
+    );
 }

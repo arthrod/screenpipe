@@ -99,7 +99,10 @@ impl N8nCredential {
 /// credential a node needs when n8n holds exactly one of its type. On a
 /// refusal, every problem is listed so one answer tells the chat all it must
 /// fix.
-pub fn check_and_wire(workflow: &mut Value, credentials: &[N8nCredential]) -> Result<(), Vec<String>> {
+pub fn check_and_wire(
+    workflow: &mut Value,
+    credentials: &[N8nCredential],
+) -> Result<(), Vec<String>> {
     let problems = inspect(workflow, credentials).problems();
     if problems.is_empty() {
         Ok(())
@@ -134,7 +137,10 @@ pub const NO_TRIGGER: &str = "the workflow has no trigger node, so it would neve
 impl Report {
     /// Why the workflow can never become a Flow as built: inventions only.
     pub fn inventions(&self) -> Vec<String> {
-        self.nodes.iter().filter_map(|node| node.invention.clone()).collect()
+        self.nodes
+            .iter()
+            .filter_map(|node| node.invention.clone())
+            .collect()
     }
 
     /// Every problem, node by node, then the missing trigger.
@@ -171,16 +177,26 @@ pub fn inspect(workflow: &mut Value, credentials: &[N8nCredential]) -> Report {
             credentials: Vec::new(),
         };
         if !linked.contains(&name) {
-            report.missing.push(format!("« {name} » is connected to no other node"));
+            report
+                .missing
+                .push(format!("« {name} » is connected to no other node"));
         }
         inspect_node(node, &mut report, credentials, &mut has_trigger);
         report.credentials = held_credentials(node);
         reports.push(report);
     }
-    Report { nodes: reports, has_trigger }
+    Report {
+        nodes: reports,
+        has_trigger,
+    }
 }
 
-fn inspect_node(node: &mut Value, report: &mut NodeReport, credentials: &[N8nCredential], has_trigger: &mut bool) {
+fn inspect_node(
+    node: &mut Value,
+    report: &mut NodeReport,
+    credentials: &[N8nCredential],
+    has_trigger: &mut bool,
+) {
     let catalog = catalog();
     let (name, kind) = (report.name.clone(), report.kind.clone());
     let Some(groups) = catalog.nodes.get(&kind) else {
@@ -196,7 +212,11 @@ fn inspect_node(node: &mut Value, report: &mut NodeReport, credentials: &[N8nCre
         .iter()
         .find(|g| g.versions.iter().any(|v| (v - version).abs() < 1e-9))
     else {
-        let known: Vec<String> = groups.iter().flat_map(|g| &g.versions).map(f64::to_string).collect();
+        let known: Vec<String> = groups
+            .iter()
+            .flat_map(|g| &g.versions)
+            .map(f64::to_string)
+            .collect();
         report.invention = Some(format!(
             "« {name} »: `{kind}` has no version {version} here (versions: {})",
             known.join(", ")
@@ -206,7 +226,11 @@ fn inspect_node(node: &mut Value, report: &mut NodeReport, credentials: &[N8nCre
     *has_trigger |= group.trigger;
     let empty_params = Map::new();
     let params = node["parameters"].as_object().unwrap_or(&empty_params);
-    let eval = Eval { group, params, version };
+    let eval = Eval {
+        group,
+        params,
+        version,
+    };
 
     let mut checked = HashSet::new();
     for def in group.params.iter().filter(|def| def.required) {
@@ -216,7 +240,10 @@ fn inspect_node(node: &mut Value, report: &mut NodeReport, credentials: &[N8nCre
         checked.insert(def.name.clone());
         let value = params.get(&def.name).unwrap_or(&def.default);
         if is_empty(value, def.kind.as_deref()) {
-            report.missing.push(format!("« {name} »: required parameter `{}` is empty", def.name));
+            report.missing.push(format!(
+                "« {name} »: required parameter `{}` is empty",
+                def.name
+            ));
         }
     }
 
@@ -248,7 +275,10 @@ fn held_credentials(node: &Value) -> Vec<(String, String)> {
         .into_iter()
         .flatten()
         .map(|(kind, credential)| {
-            (kind.clone(), credential["name"].as_str().unwrap_or_default().to_string())
+            (
+                kind.clone(),
+                credential["name"].as_str().unwrap_or_default().to_string(),
+            )
         })
         .collect()
 }
@@ -268,7 +298,11 @@ pub fn skeleton_parameters(
         .get(kind)?
         .iter()
         .find(|g| g.versions.iter().any(|v| (v - version).abs() < 1e-9))?;
-    let eval = Eval { group, params: chosen, version };
+    let eval = Eval {
+        group,
+        params: chosen,
+        version,
+    };
     let mut parameters = chosen.clone();
     for def in &group.params {
         if !parameters.contains_key(&def.name) && eval.shown(&def.rules, 0) == Some(true) {
@@ -280,9 +314,17 @@ pub fn skeleton_parameters(
 
 /// Keeps the node's credential of `kind` when n8n holds it, else wires the
 /// only one n8n has of that kind.
-fn wire(node: &mut Value, name: &str, kind: &str, credentials: &[N8nCredential]) -> Result<(), String> {
+fn wire(
+    node: &mut Value,
+    name: &str,
+    kind: &str,
+    credentials: &[N8nCredential],
+) -> Result<(), String> {
     let held = node["credentials"][kind]["id"].as_str();
-    if credentials.iter().any(|c| c.kind == kind && Some(c.id.as_str()) == held) {
+    if credentials
+        .iter()
+        .any(|c| c.kind == kind && Some(c.id.as_str()) == held)
+    {
         return Ok(());
     }
     let candidates: Vec<&N8nCredential> = credentials.iter().filter(|c| c.kind == kind).collect();
@@ -310,7 +352,12 @@ fn linked_names(connections: &Value) -> HashSet<String> {
     let mut names = HashSet::new();
     for (source, outputs) in connections.as_object().into_iter().flatten() {
         for lists in outputs.as_object().into_iter().flat_map(|o| o.values()) {
-            for target in lists.as_array().into_iter().flatten().flat_map(|l| l.as_array().into_iter().flatten()) {
+            for target in lists
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|l| l.as_array().into_iter().flatten())
+            {
                 if let Some(target) = target["node"].as_str() {
                     names.insert(source.clone());
                     names.insert(target.to_string());
@@ -330,7 +377,9 @@ fn is_empty(value: &Value, kind: Option<&str>) -> bool {
         Value::Object(fields) if fields.contains_key("__rl") => {
             is_empty(fields.get("value").unwrap_or(&Value::Null), None)
         }
-        Value::Object(fields) => matches!(kind, Some("collection" | "fixedCollection")) && fields.is_empty(),
+        Value::Object(fields) => {
+            matches!(kind, Some("collection" | "fixedCollection")) && fields.is_empty()
+        }
         Value::Bool(_) | Value::Number(_) => false,
     }
 }
@@ -450,7 +499,11 @@ mod tests {
             ("i1", "NovaDesk IMAP", "imap"),
         ]
         .into_iter()
-        .map(|(id, name, kind)| N8nCredential { id: id.into(), name: name.into(), kind: kind.into() })
+        .map(|(id, name, kind)| N8nCredential {
+            id: id.into(),
+            name: name.into(),
+            kind: kind.into(),
+        })
         .collect()
     }
 
@@ -460,16 +513,24 @@ mod tests {
 
     /// The nodes, each connected to the next.
     fn chain(nodes: Vec<Value>) -> Value {
-        let names: Vec<String> = nodes.iter().map(|n| n["name"].as_str().unwrap().to_string()).collect();
+        let names: Vec<String> = nodes
+            .iter()
+            .map(|n| n["name"].as_str().unwrap().to_string())
+            .collect();
         let mut connections = Map::new();
         for pair in names.windows(2) {
-            connections.insert(pair[0].clone(), json!({"main": [[{"node": pair[1], "type": "main", "index": 0}]]}));
+            connections.insert(
+                pair[0].clone(),
+                json!({"main": [[{"node": pair[1], "type": "main", "index": 0}]]}),
+            );
         }
         json!({"nodes": nodes, "connections": connections})
     }
 
     fn problems(mut workflow: Value) -> Vec<String> {
-        check_and_wire(&mut workflow, &credentials()).err().unwrap_or_default()
+        check_and_wire(&mut workflow, &credentials())
+            .err()
+            .unwrap_or_default()
     }
 
     #[test]
@@ -486,7 +547,11 @@ mod tests {
             ("spScreenpipeApi1", "screenpipeApi"),
             ("spNovaJira000001", "jiraSoftwareCloudApi"),
         ] {
-            credentials.push(N8nCredential { id: id.into(), name: id.into(), kind: kind.into() });
+            credentials.push(N8nCredential {
+                id: id.into(),
+                name: id.into(),
+                kind: kind.into(),
+            });
         }
         let before = demo.clone();
         assert_eq!(check_and_wire(&mut demo, &credentials), Ok(()));
@@ -501,7 +566,9 @@ mod tests {
         assert!(found[0].contains("switched off in this n8n"), "{found:?}");
 
         let invented = json!({"name": "Terminal", "type": "n8n-nodes-base.openTerminal", "typeVersion": 1, "parameters": {}});
-        assert!(problems(chain(vec![schedule(), invented]))[0].contains("not a node type this n8n has"));
+        assert!(
+            problems(chain(vec![schedule(), invented]))[0].contains("not a node type this n8n has")
+        );
     }
 
     #[test]
@@ -517,7 +584,8 @@ mod tests {
         assert_eq!(found.len(), 3, "{found:?}");
         assert!(found.iter().any(|p| p.contains("`sendTo`")));
 
-        let ok = gmail(json!({"operation": "send", "sendTo": "a@b.c", "subject": "s", "message": "m"}));
+        let ok =
+            gmail(json!({"operation": "send", "sendTo": "a@b.c", "subject": "s", "message": "m"}));
         assert_eq!(problems(chain(vec![schedule(), ok])), Vec::<String>::new());
 
         let http = json!({"name": "Requête", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "parameters": {}});
@@ -532,8 +600,14 @@ mod tests {
                    "parameters": {"operation": "send", "sendTo": "a@b.c", "subject": "s", "message": "m"}}),
         ]);
         assert_eq!(check_and_wire(&mut workflow, &credentials()), Ok(()));
-        assert_eq!(workflow["nodes"][0]["credentials"], json!({"screenpipeApi": {"id": "s1", "name": "ScreenPipe API"}}));
-        assert_eq!(workflow["nodes"][1]["credentials"], json!({"gmailOAuth2": {"id": "g1", "name": "Gmail"}}));
+        assert_eq!(
+            workflow["nodes"][0]["credentials"],
+            json!({"screenpipeApi": {"id": "s1", "name": "ScreenPipe API"}})
+        );
+        assert_eq!(
+            workflow["nodes"][1]["credentials"],
+            json!({"gmailOAuth2": {"id": "g1", "name": "Gmail"}})
+        );
 
         let slack = json!({"name": "Slack", "type": "n8n-nodes-base.slack", "typeVersion": 2.3,
                            "parameters": {"select": "channel", "channelId": {"__rl": true, "mode": "id", "value": "C1"}, "text": "hi"}});
@@ -544,25 +618,38 @@ mod tests {
     #[test]
     fn several_credentials_of_a_type_are_never_chosen_between() {
         let mut two = credentials();
-        two.push(N8nCredential { id: "g2".into(), name: "Gmail perso".into(), kind: "gmailOAuth2".into() });
+        two.push(N8nCredential {
+            id: "g2".into(),
+            name: "Gmail perso".into(),
+            kind: "gmailOAuth2".into(),
+        });
         let mut workflow = chain(vec![
             schedule(),
             json!({"name": "Envoyer", "type": "n8n-nodes-base.gmail", "typeVersion": 2.1,
                    "parameters": {"operation": "send", "sendTo": "a@b.c", "subject": "s", "message": "m"}}),
         ]);
         let found = check_and_wire(&mut workflow, &two).unwrap_err();
-        assert!(found[0].contains("has 2 (« Gmail », « Gmail perso »)"), "{found:?}");
+        assert!(
+            found[0].contains("has 2 (« Gmail », « Gmail perso »)"),
+            "{found:?}"
+        );
 
         // The credential n8n already gives the node is kept.
-        workflow["nodes"][1]["credentials"] = json!({"gmailOAuth2": {"id": "g2", "name": "Gmail perso"}});
+        workflow["nodes"][1]["credentials"] =
+            json!({"gmailOAuth2": {"id": "g2", "name": "Gmail perso"}});
         assert_eq!(check_and_wire(&mut workflow, &two), Ok(()));
     }
 
     #[test]
     fn a_predefined_credential_type_must_exist() {
-        let http = |kind: &str| json!({"name": "Jira", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2,
-            "parameters": {"url": "https://x", "authentication": "predefinedCredentialType", "nodeCredentialType": kind}});
-        assert_eq!(problems(chain(vec![schedule(), http("jiraSoftwareCloudApi")])), Vec::<String>::new());
+        let http = |kind: &str| {
+            json!({"name": "Jira", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2,
+            "parameters": {"url": "https://x", "authentication": "predefinedCredentialType", "nodeCredentialType": kind}})
+        };
+        assert_eq!(
+            problems(chain(vec![schedule(), http("jiraSoftwareCloudApi")])),
+            Vec::<String>::new()
+        );
         assert!(problems(chain(vec![schedule(), http("notionApi")]))[0].contains("`notionApi`"));
     }
 
@@ -572,10 +659,15 @@ mod tests {
         let lone = json!({"nodes": [schedule(), http.clone()], "connections": {}});
         let found = problems(lone);
         assert_eq!(found.len(), 2, "{found:?}");
-        assert!(found.iter().all(|p| p.contains("connected to no other node")));
+        assert!(found
+            .iter()
+            .all(|p| p.contains("connected to no other node")));
 
         let set = json!({"name": "Préparer", "type": "n8n-nodes-base.set", "typeVersion": 3.4, "parameters": {}});
-        assert_eq!(problems(chain(vec![http, set])), vec!["the workflow has no trigger node, so it would never run"]);
+        assert_eq!(
+            problems(chain(vec![http, set])),
+            vec!["the workflow has no trigger node, so it would never run"]
+        );
     }
 
     #[test]

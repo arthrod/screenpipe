@@ -118,8 +118,8 @@ export function WorkflowStepEvidence({ workflow, stage, platform, timelineLabel,
       const suffix = screenshots.length > 1 ? ` ${index + 1}` : "";
       return <EvidenceFigure key={`${capture.frameId}:${capture.timestamp}`} capture={capture} stage={stage} platform={platform} suffix={suffix} selected={selectedImage === capture.frameId} opening={opening}
         select={() => setSelectedImage(capture.frameId)}
-        actions={onImageLayoutChange ? { remove: () => removeImage(capture.frameId), up: () => moveImage(index, -1), down: () => moveImage(index, 1),
-          upDisabled: index === 0 && layout.beforeText, downDisabled: index === screenshots.length - 1 && !layout.beforeText } : undefined}
+        actions={{ remove: () => removeImage(capture.frameId), up: () => moveImage(index, -1), down: () => moveImage(index, 1),
+          upDisabled: index === 0 && layout.beforeText, downDisabled: index === screenshots.length - 1 && !layout.beforeText }}
         replay={!isEmbeddedScreenshot(capture) && (canReplay || !!platform.openCapturedMoment) ? () => void openRecording(capture) : undefined}
         resolved={capture === preview.image} />;
     })}

@@ -75,11 +75,10 @@ pub fn requested_model(body: &[u8]) -> Option<ChatGptModel> {
 /// subscription.
 pub async fn chat_completions(model: ChatGptModel, body: axum::body::Bytes) -> Response {
     // Reads, and refreshes when expired, the token the app stored. Blocking.
-    let token =
-        tokio::task::spawn_blocking(screenpipe_core::pipes::read_chatgpt_oauth_token)
-            .await
-            .ok()
-            .flatten();
+    let token = tokio::task::spawn_blocking(screenpipe_core::pipes::read_chatgpt_oauth_token)
+        .await
+        .ok()
+        .flatten();
     let Some(token) = token else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -221,7 +220,11 @@ fn responses_request(request: &Value, model: &ChatGptModel) -> Result<Value, Str
     let mut input = Vec::new();
     for (index, message) in messages.iter().enumerate() {
         let content = message.get("content");
-        match message.get("role").and_then(Value::as_str).unwrap_or_default() {
+        match message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
             "system" | "developer" => instructions.push(text_of(content)?),
             "user" => input.push(json!({"role": "user", "content": user_content(content)?})),
             "assistant" => {
@@ -270,7 +273,10 @@ fn responses_request(request: &Value, model: &ChatGptModel) -> Result<Value, Str
         "stream": true,
     });
     if let Some(tools) = request.get("tools").and_then(Value::as_array) {
-        let tools = tools.iter().map(function_tool).collect::<Result<Vec<_>, _>>()?;
+        let tools = tools
+            .iter()
+            .map(function_tool)
+            .collect::<Result<Vec<_>, _>>()?;
         body["tools"] = tools.into();
     }
     match request.get("tool_choice") {
@@ -282,7 +288,10 @@ fn responses_request(request: &Value, model: &ChatGptModel) -> Result<Value, Str
         }
         None => {}
     }
-    if let Some(parallel) = request.get("parallel_tool_calls").filter(|p| p.is_boolean()) {
+    if let Some(parallel) = request
+        .get("parallel_tool_calls")
+        .filter(|p| p.is_boolean())
+    {
         body["parallel_tool_calls"] = parallel.clone();
     }
     if let Some(format) = text_format(request.get("response_format")) {
@@ -356,7 +365,10 @@ fn function_tool(tool: &Value) -> Result<Value, String> {
         .cloned()
         .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
     out.insert("parameters".into(), parameters);
-    let strict = function.get("strict").and_then(Value::as_bool).unwrap_or(false);
+    let strict = function
+        .get("strict")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     out.insert("strict".into(), strict.into());
     Ok(Value::Object(out))
 }
@@ -400,7 +412,11 @@ fn read_stream(sse: &str) -> Result<Answer, (StatusCode, String)> {
         let Ok(event) = serde_json::from_str::<Value>(data.trim()) else {
             continue;
         };
-        match event.get("type").and_then(Value::as_str).unwrap_or_default() {
+        match event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+        {
             "response.output_item.done" => items.extend(event.get("item").cloned()),
             "response.completed" | "response.done" | "response.incomplete" => {
                 let response = event.get("response").cloned().unwrap_or(Value::Null);
@@ -491,7 +507,13 @@ fn chat_completion(answer: &Answer, model: &ChatGptModel) -> Value {
         .get("created_at")
         .and_then(Value::as_i64)
         .unwrap_or_else(|| chrono::Utc::now().timestamp());
-    let tokens = |key: &str| answer.response.pointer(&format!("/usage/{key}")).cloned().unwrap_or(0.into());
+    let tokens = |key: &str| {
+        answer
+            .response
+            .pointer(&format!("/usage/{key}"))
+            .cloned()
+            .unwrap_or(0.into())
+    };
     json!({
         "id": format!("chatcmpl-{}", uuid::Uuid::new_v4().simple()),
         "object": "chat.completion",
@@ -542,7 +564,10 @@ fn chat_stream(completion: &Value, include_usage: bool) -> String {
         usage["usage"] = completion["usage"].clone();
         events.push(usage);
     }
-    let mut stream: String = events.iter().map(|event| format!("data: {event}\n\n")).collect();
+    let mut stream: String = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect();
     stream.push_str("data: [DONE]\n\n");
     stream
 }
@@ -570,7 +595,10 @@ fn error(status: StatusCode, code: &str, message: &str) -> Response {
 
 /// The string at `pointer`, or "" when it is missing or not a string.
 fn str_at<'a>(value: &'a Value, pointer: &str) -> &'a str {
-    value.pointer(pointer).and_then(Value::as_str).unwrap_or_default()
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -584,10 +612,13 @@ mod tests {
 
     /// An unsigned JWT whose payload carries `claims`; only the payload is read.
     fn jwt(claims: Value) -> String {
-        let encode = |v: &Value| {
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string())
-        };
-        format!("{}.{}.sig", encode(&json!({"alg": "none"})), encode(&claims))
+        let encode =
+            |v: &Value| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string());
+        format!(
+            "{}.{}.sig",
+            encode(&json!({"alg": "none"})),
+            encode(&claims)
+        )
     }
 
     fn auth() -> ChatGptAuth {
@@ -599,7 +630,12 @@ mod tests {
     fn sse(events: &[Value]) -> String {
         events
             .iter()
-            .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+            .map(|event| {
+                format!(
+                    "event: {}\ndata: {event}\n\n",
+                    event["type"].as_str().unwrap()
+                )
+            })
             .collect()
     }
 
@@ -627,7 +663,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/backend-api/codex/responses"))
-            .and(header("authorization", format!("Bearer {}", auth().token).as_str()))
+            .and(header(
+                "authorization",
+                format!("Bearer {}", auth().token).as_str(),
+            ))
             .and(header("chatgpt-account-id", ACCOUNT))
             .and(body_partial_json(json!({"store": false, "stream": true})))
             .respond_with(upstream)
@@ -661,7 +700,8 @@ mod tests {
 
     #[test]
     fn only_chatgpt_prefixed_models_are_for_chatgpt() {
-        let requested = |m: &str| requested_model(json!({"model": m, "messages": []}).to_string().as_bytes());
+        let requested =
+            |m: &str| requested_model(json!({"model": m, "messages": []}).to_string().as_bytes());
         let terra = requested("chatgpt/gpt-5.6-terra").unwrap();
         assert_eq!((terra.name.as_str(), terra.effort), ("gpt-5.6-terra", None));
         assert_eq!(requested("auto"), None);
@@ -675,7 +715,10 @@ mod tests {
     #[test]
     fn an_effort_suffix_sets_the_reasoning_effort() {
         let luna = model("chatgpt/gpt-5.6-luna:max");
-        assert_eq!((luna.name.as_str(), luna.effort.as_deref()), ("gpt-5.6-luna", Some("max")));
+        assert_eq!(
+            (luna.name.as_str(), luna.effort.as_deref()),
+            ("gpt-5.6-luna", Some("max"))
+        );
         assert_eq!(model("chatgpt/gpt-5.6-luna:").effort, None);
 
         let request = json!({"messages": [{"role": "user", "content": "hi"}]});
@@ -684,12 +727,19 @@ mod tests {
         assert_eq!(body["reasoning"], json!({"effort": "max"}));
 
         // An effort the request names wins over the suffix.
-        let request = json!({"reasoning_effort": "low", "messages": [{"role": "user", "content": "hi"}]});
-        assert_eq!(responses_request(&request, &luna).unwrap()["reasoning"], json!({"effort": "low"}));
+        let request =
+            json!({"reasoning_effort": "low", "messages": [{"role": "user", "content": "hi"}]});
+        assert_eq!(
+            responses_request(&request, &luna).unwrap()["reasoning"],
+            json!({"effort": "low"})
+        );
 
         // No suffix and no request effort: the backend's default.
         let plain = json!({"messages": [{"role": "user", "content": "hi"}]});
-        assert!(responses_request(&plain, &model("chatgpt/gpt-5.6-luna")).unwrap().get("reasoning").is_none());
+        assert!(responses_request(&plain, &model("chatgpt/gpt-5.6-luna"))
+            .unwrap()
+            .get("reasoning")
+            .is_none());
     }
 
     #[test]
@@ -729,27 +779,30 @@ mod tests {
 
         let body = responses_request(&request, &model("chatgpt/gpt-5.6-terra")).unwrap();
 
-        assert_eq!(body, json!({
-            "model": "gpt-5.6-terra",
-            "instructions": "Classify emails.\n\nAnswer in JSON.",
-            "input": [
-                {"role": "user", "content": [
-                    {"type": "input_text", "text": "Is this a bug?"},
-                    {"type": "input_image", "image_url": "data:image/png;base64,AAA", "detail": "auto"},
-                ]},
-                {"type": "function_call", "call_id": "call_1", "name": "search", "arguments": "{\"q\":\"jira\"}"},
-                {"type": "function_call_output", "call_id": "call_1", "output": "NOVA-12 created by hand"},
-                {"type": "message", "role": "assistant", "status": "completed", "id": "msg_5",
-                 "content": [{"type": "output_text", "text": "Looking.", "annotations": []}]},
-            ],
-            "store": false,
-            "stream": true,
-            "tools": [{"type": "function", "name": "search", "description": "Search ScreenPipe",
-                       "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}, "strict": false}],
-            "tool_choice": {"type": "function", "name": "search"},
-            "text": {"format": {"type": "json_schema", "name": "ticket", "schema": {"type": "object"}, "strict": true}},
-            "reasoning": {"effort": "low"},
-        }));
+        assert_eq!(
+            body,
+            json!({
+                "model": "gpt-5.6-terra",
+                "instructions": "Classify emails.\n\nAnswer in JSON.",
+                "input": [
+                    {"role": "user", "content": [
+                        {"type": "input_text", "text": "Is this a bug?"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,AAA", "detail": "auto"},
+                    ]},
+                    {"type": "function_call", "call_id": "call_1", "name": "search", "arguments": "{\"q\":\"jira\"}"},
+                    {"type": "function_call_output", "call_id": "call_1", "output": "NOVA-12 created by hand"},
+                    {"type": "message", "role": "assistant", "status": "completed", "id": "msg_5",
+                     "content": [{"type": "output_text", "text": "Looking.", "annotations": []}]},
+                ],
+                "store": false,
+                "stream": true,
+                "tools": [{"type": "function", "name": "search", "description": "Search ScreenPipe",
+                           "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}, "strict": false}],
+                "tool_choice": {"type": "function", "name": "search"},
+                "text": {"format": {"type": "json_schema", "name": "ticket", "schema": {"type": "object"}, "strict": true}},
+                "reasoning": {"effort": "low"},
+            })
+        );
     }
 
     #[test]
@@ -757,15 +810,22 @@ mod tests {
         let request = json!({"messages": [{"role": "user", "content": "hi"}]});
         let body = responses_request(&request, &model("chatgpt/gpt-5.6-terra")).unwrap();
         assert_eq!(body["instructions"], DEFAULT_INSTRUCTIONS);
-        assert_eq!(body["input"], json!([{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]));
+        assert_eq!(
+            body["input"],
+            json!([{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}])
+        );
     }
 
     #[test]
     fn unsupported_content_is_refused_by_name() {
         let audio = json!({"messages": [{"role": "user", "content": [{"type": "input_audio"}]}]});
-        assert!(responses_request(&audio, &model("chatgpt/m")).unwrap_err().contains("input_audio"));
+        assert!(responses_request(&audio, &model("chatgpt/m"))
+            .unwrap_err()
+            .contains("input_audio"));
         let role = json!({"messages": [{"role": "function", "content": "x"}]});
-        assert!(responses_request(&role, &model("chatgpt/m")).unwrap_err().contains("function"));
+        assert!(responses_request(&role, &model("chatgpt/m"))
+            .unwrap_err()
+            .contains("function"));
         let tool = json!({"messages": [], "tools": [{"type": "web_search"}]});
         assert!(responses_request(&tool, &model("chatgpt/m")).is_err());
     }
@@ -789,9 +849,15 @@ mod tests {
         assert_eq!(body["object"], "chat.completion");
         assert_eq!(body["model"], "chatgpt/gpt-5.6-terra");
         assert_eq!(body["created"], 1_700_000_000);
-        assert_eq!(body["choices"][0]["message"], json!({"role": "assistant", "content": "Bug"}));
+        assert_eq!(
+            body["choices"][0]["message"],
+            json!({"role": "assistant", "content": "Bug"})
+        );
         assert_eq!(body["choices"][0]["finish_reason"], "stop");
-        assert_eq!(body["usage"], json!({"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}));
+        assert_eq!(
+            body["usage"],
+            json!({"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15})
+        );
     }
 
     #[tokio::test]
@@ -808,28 +874,40 @@ mod tests {
         ))
         .await;
 
-        let (_, _, body) = proxy(&server, json!({"messages": [{"role": "user", "content": "find"}]})).await;
+        let (_, _, body) = proxy(
+            &server,
+            json!({"messages": [{"role": "user", "content": "find"}]}),
+        )
+        .await;
 
         let body = json_of(&body);
         assert_eq!(body["choices"][0]["finish_reason"], "tool_calls");
-        assert_eq!(body["choices"][0]["message"], json!({
-            "role": "assistant",
-            "content": null,
-            "tool_calls": [{"id": "call_abc", "type": "function",
-                            "function": {"name": "search", "arguments": "{\"q\":\"NOVA\"}"}}],
-        }));
+        assert_eq!(
+            body["choices"][0]["message"],
+            json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{"id": "call_abc", "type": "function",
+                                "function": {"name": "search", "arguments": "{\"q\":\"NOVA\"}"}}],
+            })
+        );
     }
 
     #[tokio::test]
     async fn the_final_output_is_used_when_no_item_was_streamed() {
         let mut done = completed(json!({}));
-        done["response"]["output"] = json!([{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]);
+        done["response"]["output"] =
+            json!([{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]);
         let server = fake_chatgpt(
             ResponseTemplate::new(200).set_body_raw(sse(&[done]), "text/event-stream"),
         )
         .await;
 
-        let (_, _, body) = proxy(&server, json!({"messages": [{"role": "user", "content": "hi"}]})).await;
+        let (_, _, body) = proxy(
+            &server,
+            json!({"messages": [{"role": "user", "content": "hi"}]}),
+        )
+        .await;
 
         assert_eq!(json_of(&body)["choices"][0]["message"]["content"], "OK");
     }
@@ -859,8 +937,13 @@ mod tests {
             .map(|data| serde_json::from_str(data).unwrap())
             .collect();
         assert_eq!(chunks.len(), 3);
-        assert!(chunks.iter().all(|c| c["object"] == "chat.completion.chunk"));
-        assert_eq!(chunks[0]["choices"][0]["delta"], json!({"role": "assistant", "content": "Bug"}));
+        assert!(chunks
+            .iter()
+            .all(|c| c["object"] == "chat.completion.chunk"));
+        assert_eq!(
+            chunks[0]["choices"][0]["delta"],
+            json!({"role": "assistant", "content": "Bug"})
+        );
         assert_eq!(chunks[1]["choices"][0]["finish_reason"], "stop");
         assert_eq!(chunks[2]["usage"]["total_tokens"], 15);
     }
@@ -872,11 +955,21 @@ mod tests {
         })))
         .await;
 
-        let (status, _, body) = proxy(&server, json!({"messages": [{"role": "user", "content": "hi"}]})).await;
+        let (status, _, body) = proxy(
+            &server,
+            json!({"messages": [{"role": "user", "content": "hi"}]}),
+        )
+        .await;
 
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-        let message = json_of(&body)["error"]["message"].as_str().unwrap().to_string();
-        assert!(message.contains("HTTP 429") && message.contains("usage limit"), "{message}");
+        let message = json_of(&body)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            message.contains("HTTP 429") && message.contains("usage limit"),
+            "{message}"
+        );
     }
 
     #[tokio::test]
@@ -889,10 +982,17 @@ mod tests {
         ))
         .await;
 
-        let (status, _, body) = proxy(&server, json!({"messages": [{"role": "user", "content": "hi"}]})).await;
+        let (status, _, body) = proxy(
+            &server,
+            json!({"messages": [{"role": "user", "content": "hi"}]}),
+        )
+        .await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(json_of(&body)["error"]["message"], "ChatGPT failed: something broke");
+        assert_eq!(
+            json_of(&body)["error"]["message"],
+            "ChatGPT failed: something broke"
+        );
     }
 
     #[tokio::test]
@@ -903,7 +1003,11 @@ mod tests {
         ))
         .await;
 
-        let (status, _, _) = proxy(&server, json!({"messages": [{"role": "user", "content": "hi"}]})).await;
+        let (status, _, _) = proxy(
+            &server,
+            json!({"messages": [{"role": "user", "content": "hi"}]}),
+        )
+        .await;
 
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     }
@@ -916,7 +1020,11 @@ mod tests {
         ))
         .await;
 
-        let (status, _, _) = proxy(&server, json!({"messages": [{"role": "user", "content": "hi"}]})).await;
+        let (status, _, _) = proxy(
+            &server,
+            json!({"messages": [{"role": "user", "content": "hi"}]}),
+        )
+        .await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
     }
@@ -924,7 +1032,11 @@ mod tests {
     #[tokio::test]
     async fn a_bad_request_never_reaches_chatgpt() {
         let server = MockServer::start().await;
-        Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
 
         let (status, _, body) = proxy(&server, json!({"messages": "hi"})).await;
 
