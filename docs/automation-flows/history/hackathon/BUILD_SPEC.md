@@ -64,6 +64,6 @@ scripted; the finished product uses the `workflow-*` detection pipeline.
 
 ## Historical context
 
-`CONVERSATION_NOTES.md` (same folder) is the raw conversation that produced the
-spec. It is not authoritative; consult it only when the rationale for a
-decision is unclear.
+The raw conversation that produced the spec (formerly `CONVERSATION_NOTES.md`,
+same folder) is kept out of the public repository, per its own containment
+rule; it is not authoritative.

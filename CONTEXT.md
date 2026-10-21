@@ -62,6 +62,10 @@ _Avoid_: deploy, enable, accept
 **Draft**:
 A Flow that has never been activated.
 
+**Active**:
+A Flow that n8n runs on its trigger.
+_Avoid_: on, live
+
 **Paused**:
 A Flow that was activated, then switched off, and has not changed since.
 _Avoid_: stopped, disabled
@@ -70,6 +74,10 @@ _Avoid_: stopped, disabled
 A Flow whose n8n workflow changed since its last Activation; it must be
 reviewed and activated again.
 _Avoid_: outdated, dirty
+
+**Dismissed**:
+A Flow the user set aside; Restore brings it back.
+_Avoid_: deleted, archived
 
 ## Relationships
 

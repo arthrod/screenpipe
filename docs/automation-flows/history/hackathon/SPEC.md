@@ -4,7 +4,7 @@ Status: ready for implementation (grilled 2026-10-17). Direction lives in
 `AGENTS.md`; vocabulary in `CONTEXT.md`; build order and risks in
 `BUILD_SPEC.md`; problem, user stories and test seams in
 `automation-flows-spec.md` (the `ready-for-agent` ticket). This file holds the decisions and contracts the implementation
-follows. Where it conflicts with `CONVERSATION_NOTES.md`, this file wins.
+follows.
 
 ## User journey
 

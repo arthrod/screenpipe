@@ -2630,6 +2630,145 @@ async fn every_example_flow_of_the_guide_passes_the_flow_check() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Shipped docs parity: SKILL.md and the design history must match the code
+// ---------------------------------------------------------------------------
+
+/// The shipped NovaDesk workflow, the one SKILL.md's worked example edits.
+fn shipped_novadesk_workflow() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../infra/automation-flows/workflows/novadesk-support-tickets.json"
+    ))
+    .expect("the shipped NovaDesk workflow parses")
+}
+
+/// SKILL.md's worked example edits the shipped NovaDesk workflow: the
+/// expression it says the node holds must exist verbatim in the shipped
+/// `novadesk-support-tickets.json`, or the agent cannot find it (and rule 3
+/// forbids retyping the JSON).
+#[test]
+fn the_skill_worked_example_quotes_an_expression_the_shipped_workflow_holds() {
+    let skill = include_str!("../../screenpipe-core/assets/skills/automation-flows/SKILL.md");
+    let example = skill
+        .split("### Example")
+        .nth(1)
+        .expect("SKILL.md has a worked example");
+    let example = &example[..example.find("\n## ").unwrap_or(example.len())];
+
+    assert!(
+        !example.contains("$json.output.label"),
+        "SKILL.md's example quotes `$json.output.label`, which occurs nowhere \
+         in the shipped NovaDesk workflow"
+    );
+
+    let body = shipped_novadesk_workflow()["nodes"]
+        .as_array()
+        .and_then(|nodes| {
+            nodes
+                .iter()
+                .find(|node| node["name"] == "Create the Jira ticket")
+        })
+        .and_then(|node| node["parameters"]["jsonBody"].as_str())
+        .expect("the NovaDesk workflow has a « Create the Jira ticket » node with a jsonBody");
+    let holds = example
+        .find("holds")
+        .expect("the example says what the node holds");
+    let open = example[holds..]
+        .find('`')
+        .expect("the held expression is quoted in backticks")
+        + holds;
+    let close = example[open + 1..]
+        .find('`')
+        .expect("the held expression's backtick span closes")
+        + open
+        + 1;
+    let quoted = &example[open + 1..close];
+    assert!(
+        body.contains(quoted),
+        "SKILL.md's example quotes an expression the shipped workflow does \
+         not hold:\n{quoted}"
+    );
+
+    // The real labels: the local `o` binding holds the AI's chosen label,
+    // and the edit appends 'auto' while keeping the FNV dedup label.
+    assert!(
+        example.contains("o.label"),
+        "the example must quote the real first label, `o.label`"
+    );
+    assert!(
+        example.contains("'auto'"),
+        "the example must say to append 'auto' to the labels array"
+    );
+    assert!(
+        example.contains("dedup"),
+        "the example must say the second label is the per-email dedup key to keep"
+    );
+}
+
+/// The status values SKILL.md and CONTEXT.md advertise must cover every one
+/// `derive_status` returns, or an agent (or reader) waits for a status that
+/// never comes — `dismissed` exists since dismiss/restore shipped.
+#[test]
+fn skill_and_context_list_all_five_flow_statuses() {
+    let statuses = ["draft", "active", "paused", "needs_review", "dismissed"];
+
+    let skill = include_str!("../../screenpipe-core/assets/skills/automation-flows/SKILL.md");
+    let line: String = skill
+        .lines()
+        .skip_while(|line| !line.starts_with("`status` is `draft`"))
+        .take_while(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(!line.is_empty(), "SKILL.md defines the status values");
+    for status in statuses {
+        assert!(
+            line.contains(&format!("`{status}`")),
+            "SKILL.md's status line misses `{status}`:\n{line}"
+        );
+    }
+
+    let context = include_str!("../../../CONTEXT.md");
+    let states = context
+        .split("## Flow states")
+        .nth(1)
+        .expect("CONTEXT.md defines the Flow states");
+    let states = &states[..states.find("\n## ").unwrap_or(states.len())];
+    for name in ["Draft", "Active", "Paused", "Needs Review", "Dismissed"] {
+        assert!(
+            states.contains(&format!("**{name}**:")),
+            "CONTEXT.md's Flow states miss **{name}**:\n{states}"
+        );
+    }
+}
+
+/// Ticket 12's doc must match the shipped retry policy (`retry.rs`): like
+/// activation, a retry needs the user's click — the route refuses a request
+/// without the UI credential (`403 retry_requires_user`); it is not open to
+/// any local caller. And « Relancer » is now `Retry`.
+#[test]
+fn the_retry_ticket_states_the_shipped_credential_policy() {
+    let doc = include_str!(
+        "../../../docs/automation-flows/history/flows-round-two/issues/\
+         12-retry-a-failed-run.md"
+    );
+    assert!(
+        !doc.contains("Open to any local caller"),
+        "ticket 12 still claims a retry is open to any local caller without \
+         the UI credential; retry.rs refuses those with 403 \
+         retry_requires_user"
+    );
+    assert!(
+        doc.contains("retry_requires_user") && doc.contains("UI credential"),
+        "ticket 12 must state the shipped policy: a retry needs the UI \
+         credential, else 403 retry_requires_user"
+    );
+    assert!(
+        doc.contains("`Retry`"),
+        "ticket 12 must note that « Relancer » is now `Retry` \
+         (flow-activity.tsx)"
+    );
+}
+
 #[tokio::test]
 async fn chat_update_of_a_draft_keeps_it_a_draft_and_its_summary() {
     let (server, n8n) = start_fake_n8n().await;

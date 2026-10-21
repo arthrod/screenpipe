@@ -35,9 +35,11 @@ Spec: `docs/automation-flows/history/hackathon/issues/27-flows-round-two.md`.
     never runs.
   - Answers the retried run as an Activity row (outcome, reason, email,
     ticket). n8n refusing → `502 n8n_failed` with n8n's message.
-  - Open to any local caller (no UI credential): it re-runs one email of a
-    Flow the user already switched on, and the notification's `api` action
-    has only the local API key.
+  - Needs the user's click, like activation: the route refuses a request
+    without the UI credential (`403 retry_requires_user`), which only the
+    Review Screen and the failure notification's « Retry » (handled by the
+    app's webview) send. The chat agent, pipes and MCP clients share the
+    local API key and cannot re-run a Flow's emails.
 - Notification (`failures.rs` `failure_notice`): a second action
   `{"type": "api", "label": "Relancer", "method": "POST", "url":
   "/automation-flows/<flow>/runs/<run>/retry", "body": {}, "deeplink_url":
@@ -114,3 +116,14 @@ retry and fails again; that email needs a fix and a new run.
   API route, browser-mock retry).
 - `bunx tsc --noEmit -p .` → no error in `components/automation-flows` or
   `lib/workflows/automation-flows.ts`.
+
+## Later changes
+
+- The retry route requires the UI credential, like activation: a request with
+  only the local API key gets `403 retry_requires_user` (see the Engine bullet
+  above, rewritten to the shipped policy; the notification's `api` action
+  still reaches the route because the app's webview adds the credential).
+- « Relancer » is now `Retry`: the UI copy moved to English
+  (`components/automation-flows/flow-activity.tsx`). The French strings this
+  ticket quotes (notification label, Activity rows, live check) are as they
+  shipped then.

@@ -78,8 +78,9 @@ the `screenpipe-api` skill (`Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY`).
 | `GET /automation-flows/nodes?q=<words>` | `{results, total}`: at most 20 node types of this n8n matching every word, best first |
 | `GET /automation-flows/nodes/card?type=<type>&resource=<r>&operation=<o>` | one node type's card (`resource` and `operation` optional) |
 
-`status` is `draft` (never activated), `active`, `paused` or `needs_review`
-(changed since its last activation).
+`status` is `draft` (never activated), `active`, `paused`, `needs_review`
+(changed since its last activation) or `dismissed` (set aside by the user;
+`POST /:id/restore` brings it back).
 
 Errors: `412 n8n_not_configured` (the user fills Connexions → n8n), `412
 n8n_unauthorized` (n8n refused the API key: the user pastes a valid key in
@@ -175,12 +176,14 @@ against: what the lookup returns is what a Flow can use.
 ### Example: « Add the `auto` label to every ticket it creates »
 
 In the NovaDesk Flow, the node « Create the Jira ticket » (`httpRequest`) builds
-the Jira issue in `parameters.jsonBody`, which holds
-`labels: [ $json.output.label ]`. Change it to
-`labels: [ $json.output.label, 'auto' ]` and set that node's `notes` to a sentence such as « The ticket is created in the
-Jira project NOVA with the chosen type, priority, back or front label and the
-auto label, assigned to nobody. » Nothing else changes; the summary can mention
-the `auto` label.
+the Jira issue in `parameters.jsonBody`. Its `labels` array holds
+`labels: [ o.label, (e => 'mail-' + (String(e.id ?? '').trim() || String(e.messageId ?? '').trim() || [e.from?.text, e.date, e.subject].join('|')).split('').reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261).toString(16).padStart(8, '0'))($('New support email').item.json) ]`
+— `o` is a local binding of the same expression (the parsed AI answer), and the
+second label is the per-email dedup key (an FNV-1a hash of the email): keep it.
+Append `'auto'` to that array, and set that node's `notes` to a sentence such as
+« The ticket is created in the Jira project NOVA with the chosen type,
+priority, back or front label and the auto label, assigned to nobody. » Nothing
+else changes; the summary can mention the `auto` label.
 
 ## Create a Flow
 
