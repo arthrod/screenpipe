@@ -1,6 +1,7 @@
 // screenpipe — AI that knows everything you've seen, said, or heard
 // https://screenpipe.com
 import { localFetch } from "@/lib/api";
+import { fetchUntilReleased } from "./privacy-pending";
 
 /** Read the recorder-owned original; never substitute a neighboring frame or persist a copy. */
 export async function loadOriginalWorkflowScreenshot(frameId: number, signal: AbortSignal): Promise<Blob> {
@@ -12,7 +13,9 @@ export async function loadOriginalWorkflowScreenshot(frameId: number, signal: Ab
   const timeout = setTimeout(abort, 15000);
   const maxBytes = 12 * 1024 * 1024;
   try {
-    const response = await localFetch(`/frames/${frameId}?fallback=false`, { signal: controller.signal });
+    // Frame media answers 503 privacy_pending until redaction releases; wait
+    // bounded, then raise a distinguishable error instead of "unavailable".
+    const response = await fetchUntilReleased(() => localFetch(`/frames/${frameId}?fallback=false`, { signal: controller.signal }), { signal: controller.signal });
     if (!response.ok) throw new Error("A screenshot is unavailable. Restore or replace that screenshot before rendering.");
     if (Number(response.headers?.get("content-length")) > maxBytes) throw new Error("A screenshot is too large.");
     const blob = await response.blob();

@@ -21,6 +21,14 @@ it("keeps wording edits possible when the original screenshot has expired", asyn
  const project=await stageVideoProject(draft,[scene],new AbortController().signal);
  expect(JSON.parse(mocks.writeTextFile.mock.calls[0][1]).images).toEqual({});await project.dispose();
 });
+it("keeps the scene's own pixels while the recorder is still redacting the original", async () => {
+ // Upstream #7634: frame media answers 503 privacy_pending until released —
+ // "not yet", so the saved preview pixels stay the image instead of dropping it.
+ mocks.load.mockRejectedValue(Object.assign(new Error("The screenshot is still being redacted; try again shortly."), { name: "PrivacyPendingError" }));
+ const project = await stageVideoProject(draft, [{ ...scene, image: "data:image/png;base64,aW1hZ2U=" }], new AbortController().signal);
+ expect(JSON.parse(mocks.writeTextFile.mock.calls[0][1]).images).toEqual({ "section-0": "image/png" });
+ await project.dispose();
+});
 it("cleans up incomplete projects on cancellation and file failures", async () => {
  const abort=new AbortController();mocks.load.mockImplementation(async()=>{abort.abort();throw new DOMException("Stopped","AbortError");});
  await expect(stageVideoProject(draft,[scene],abort.signal)).rejects.toThrow();expect(mocks.remove).toHaveBeenCalledOnce();expect(mocks.writeTextFile).not.toHaveBeenCalled();

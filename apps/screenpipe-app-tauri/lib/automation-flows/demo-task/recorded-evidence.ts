@@ -5,6 +5,7 @@
 // ScreenPipe search API, so the Task Page shows real frames like the finished
 // product would. Deterministic: words of the capture's quote, no AI. A capture
 // that cannot be found keeps its embedded key frame.
+import { isPrivacyPending, PrivacyPendingError } from "../../workflows/privacy-pending";
 import type { EvidenceCapture, RecordedFrame } from "./detected-task";
 
 export type CaptureLookup = { image: string; frame: RecordedFrame } | { image: string; frame: null; reason: string };
@@ -14,6 +15,8 @@ export type RecordingsApi = {
   key?: string;
   window: { start: string; end: string };
   timeoutMs?: number;
+  /** Step between 503 retries; scripts pass a small value to keep tests fast. */
+  backoffMs?: number;
   /** The app passes its authenticated local API client; scripts use `fetch` with `key`. */
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
 };
@@ -43,10 +46,12 @@ async function findCapture(capture: EvidenceCapture, api: RecordingsApi): Promis
       [capture.quoteIn === "window" ? "window_name" : "q"]: words(capture.quote),
     });
     // The engine serves only a few searches at once and answers 503 to the
-    // rest: searches go one at a time, and a busy answer is retried.
+    // rest: searches go one at a time, and a busy answer is retried. The same
+    // 503 also carries `privacy_pending` (#7634) while redaction catches up —
+    // both mean "not yet", so the loop waits through them.
     let response: Response | undefined;
     for (let attempt = 0; attempt < 5; attempt++) {
-      if (attempt > 0) await new Promise(done => setTimeout(done, 250 * attempt));
+      if (attempt > 0) await new Promise(done => setTimeout(done, (api.backoffMs ?? 250) * attempt));
       response = await (api.fetch ?? fetch)(`${api.url}/search?${params}`, {
         headers: api.key ? { Authorization: `Bearer ${api.key}` } : {},
         signal: AbortSignal.timeout(api.timeoutMs ?? 5_000),
@@ -57,7 +62,11 @@ async function findCapture(capture: EvidenceCapture, api: RecordingsApi): Promis
     if (response.status === 401 || response.status === 403) {
       throw new Error(`ScreenPipe refused the search (HTTP ${response.status}); set SCREENPIPE_LOCAL_API_KEY (Settings > Privacy)`);
     }
-    if (!response.ok) throw new Error(`ScreenPipe search failed (HTTP ${response.status})`);
+    if (!response.ok) {
+      if (await isPrivacyPending(response))
+        throw new PrivacyPendingError("ScreenPipe is still redacting this recording; the capture keeps its key frame for now");
+      throw new Error(`ScreenPipe search failed (HTTP ${response.status})`);
+    }
     const body = await response.json() as { data?: { type?: string; content?: SearchRow }[] };
     const row = body.data?.map(item => item.type === "OCR" ? item.content : undefined)
       .find(row => row && typeof row.timestamp === "string" && Number.isFinite(Date.parse(row.timestamp))

@@ -10,6 +10,7 @@ import { commands } from "@/lib/utils/tauri";
 import type { GuideVideoPlatform, GuideVideoResult } from "@screenpipe/workflows-ui";
 import { findWorkflowScreenshot } from "./source-screenshot";
 import { loadOriginalWorkflowScreenshot } from "./original-screenshot";
+import { isPrivacyPendingError } from "./privacy-pending";
 
 export async function loadVideoScreenshot(frameId: number, signal: AbortSignal): Promise<string> {
   const blob = await loadOriginalWorkflowScreenshot(frameId, signal);
@@ -72,14 +73,27 @@ export const desktopGuideVideo: GuideVideoPlatform = {
         // Embedded captures carry their own pixels; the recorder owns no
         // negative frame, so only positive IDs go near the loader.
         let frameId = scene.imageFrameId !== undefined && scene.imageFrameId > 0 ? scene.imageFrameId : undefined;
+        let redacting = false;
         if (!frameId && scene.imageSources?.length) {
-          for (const source of scene.imageSources.slice(0, 3)) {
-            const frame = await findWorkflowScreenshot(source.timestamp, source.app, signal);
-            if (frame) { frameId = frame.frameId; break; }
+          try {
+            for (const source of scene.imageSources.slice(0, 3)) {
+              const frame = await findWorkflowScreenshot(source.timestamp, source.app, signal);
+              if (frame) { frameId = frame.frameId; break; }
+            }
+          } catch (error) {
+            // A privacy hold on the recorder read is temporary: the scene's
+            // own saved pixels stay the image instead of failing the video.
+            if (!isPrivacyPendingError(error)) throw error;
+            redacting = true;
           }
-          if (!frameId) throw new Error(`The recording for “${scene.title}” is unavailable. Choose another screenshot before creating the video.`);
         }
-        if (frameId && !images.has(frameId)) images.set(frameId, await loadVideoScreenshot(frameId, signal));
+        if (!frameId && !redacting && !scene.image) throw new Error(`The recording for “${scene.title}” is unavailable. Choose another screenshot before creating the video.`);
+        if (frameId && !images.has(frameId)) {
+          try { images.set(frameId, await loadVideoScreenshot(frameId, signal)); }
+          catch (error) {
+            if (!isPrivacyPendingError(error)) throw error;
+          }
+        }
         prepared.push({ title: scene.title, narration: scene.narration, image: images.get(frameId ?? 0) || scene.image || null, pace: scene.pace ?? 1, focus: scene.focus ?? null });
       }
       signal.throwIfAborted();
