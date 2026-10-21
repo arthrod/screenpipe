@@ -24,7 +24,10 @@ pub fn activation_key() -> FlowActivationKey {
 }
 
 /// Hands the Flow activation credential to the webview, for the Review
-/// Screen's "Activer" click (`components/automation-flows/api.ts`).
+/// Screen's "Activer" click (`components/automation-flows/api.ts`). Not
+/// gated per window: any local app-origin page can call this command — see
+/// `screenpipe_engine::automation_flows::FlowActivationKey` for the defense
+/// that replaces window gating.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_flow_activation_key() -> String {

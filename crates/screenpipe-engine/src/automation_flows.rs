@@ -142,10 +142,17 @@ pub const ACTIVATION_HEADER: &str = "x-screenpipe-flow-activation";
 /// The chat agent (Pi), pipes and MCP clients call the local API with the same
 /// API key as the app, so that key cannot tell a user's click from an agent.
 /// This one is random per app process, held in its memory (engine and Tauri
-/// side) and handed to the webview only through a Tauri command. It is never
-/// put in an environment variable (child processes such as Pi inherit them),
-/// a file or a log, and is never the local API key. A server started without
-/// one (the CLI, no Review Screen) refuses every activation.
+/// side) and handed to the desktop UI only through a Tauri command
+/// (`get_flow_activation_key`). No per-window gating exists for it: the app
+/// ships no ACL manifest of its own, so any local app-origin page could call
+/// that command — the Review Screen is merely the only UI that does. That is
+/// why the agent-owned browser refuses app origins outright (`is_app_origin`
+/// in `owned_browser.rs`) and why its window labels hold no capability at all
+/// (`src-tauri/capabilities/main.json` binds the fs/shell/http grants to
+/// first-party app windows only). The key is never put in an environment
+/// variable (child processes such as Pi inherit them), a file or a log, and is
+/// never the local API key. A server started without one (the CLI, no Review
+/// Screen) refuses every activation.
 #[derive(Clone)]
 pub struct FlowActivationKey(Arc<str>);
 
