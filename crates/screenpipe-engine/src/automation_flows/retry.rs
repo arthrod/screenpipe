@@ -73,10 +73,9 @@ pub(super) async fn retry_run(
 /// (n8n refuses a finished one) and no retry of it succeeded yet, so a
 /// double click, or the notification after the Review Screen, runs it once.
 fn retryable(execution: &Value) -> bool {
-    let ended = !matches!(
-        execution["status"].as_str(),
-        Some("success" | "running" | "new" | "waiting")
-    );
+    // The one status mapping (`N8nApi::execution_is_running`): a run taken
+    // (`new`) or held by a Wait node (`waiting`) has not ended either.
+    let ended = !N8nApi::execution_is_running(execution);
     ended && execution["finished"] != true && execution["retrySuccessId"].is_null()
 }
 

@@ -42,6 +42,9 @@ export type ResetOptions = {
   /** Workflow catalog dir (`catalog.ts`), holding the Task Page answers. */
   catalogDir: string;
   log: (line: string) => void;
+  /** How long to wait, before switching a Flow off, for the execution n8n is
+   * processing (the engine's `RunningWait`, at the real pace). */
+  runningWait?: { interval: number; deadline: number };
 };
 export type ResetReport = { failures: string[] };
 
@@ -74,9 +77,33 @@ async function deleteWhenUnpublished(n8n: N8nCall, id: string) {
   return deleted;
 }
 
+/** An execution n8n has taken but not finished (the engine's one status
+ * mapping): a `running` one, an email the trigger counted before its execution
+ * started (`new`), or one a Wait node holds (`waiting`). */
+const beingProcessed = (execution: { status?: string }) =>
+  ["running", "new", "waiting"].includes(execution.status ?? "");
+
+/** Waits, bounded like the engine's `RunningWait`, while n8n processes an
+ * execution of the workflow: unpublishing mid-flight would lose its email.
+ * Answers whether something was still running when it gave up waiting. */
+async function waitWhileProcessing(
+  n8n: N8nCall,
+  id: string,
+  wait: { interval: number; deadline: number },
+): Promise<boolean> {
+  const started = Date.now();
+  for (;;) {
+    const listed = await n8n("GET", `/executions?workflowId=${id}&limit=100`);
+    if (!ok(listed.status)) return false; // cannot ask: never block the reset on it
+    if (!(listed.body?.data ?? []).some(beingProcessed)) return false;
+    if (Date.now() - started >= wait.deadline) return true;
+    await new Promise(done => setTimeout(done, wait.interval));
+  }
+}
+
 /** Switches a workflow off, then deletes it (archiving first when n8n asks for
  * it). Returns what it did; throws with n8n's reason when it is still there. */
-async function removeWorkflow(n8n: N8nCall, id: string): Promise<string> {
+async function removeWorkflow(n8n: N8nCall, id: string, wait: { interval: number; deadline: number }): Promise<string> {
   // Same rule as the engine's `valid_workflow_id`: never splice a path into the URL.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error(`${JSON.stringify(id)} is not an n8n workflow id; left untouched`);
   const found = await n8n("GET", `/workflows/${id}`);
@@ -85,9 +112,12 @@ async function removeWorkflow(n8n: N8nCall, id: string): Promise<string> {
   const workflow = found.body as N8nWorkflow;
   const done: string[] = [];
   if (workflow.active) {
+    const cutOff = await waitWhileProcessing(n8n, id, wait);
     const off = await n8n("POST", `/workflows/${id}/unpublish`);
     if (!ok(off.status)) throw new Error(`cannot switch off ${id}: ${answer(off)}`);
-    done.push("switched off");
+    done.push(cutOff
+      ? "switched off (it was still processing an execution: the email it held may be lost)"
+      : "switched off");
   }
   let deleted = await deleteWhenUnpublished(n8n, id);
   if (!ok(deleted.status) && deleted.status !== 404 && !workflow.isArchived) {
@@ -169,8 +199,9 @@ export async function resetDemo(options: ResetOptions): Promise<ResetReport> {
   for (const id of new Set([...demoIds, DEMO_WORKFLOW_ID])) {
     if (!n8n) break;
     const client = n8n;
+    const wait = options.runningWait ?? { interval: 1_000, deadline: 90_000 };
     await step("n8n", async () => {
-      const done = await removeWorkflow(client, id);
+      const done = await removeWorkflow(client, id, wait);
       gone.push(id);
       return done;
     });

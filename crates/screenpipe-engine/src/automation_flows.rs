@@ -789,6 +789,20 @@ impl N8nApi {
             .collect())
     }
 
+    /// Whether n8n has taken the execution and not finished it: `running`,
+    /// or an email the trigger counted before its execution started (`new`),
+    /// or one a Wait node holds (`waiting`) — the executions
+    /// [`RunningWait`] exists for. The one status mapping, shared by
+    /// [`Self::last_execution`], [`Self::is_running`] and `retryable`.
+    fn execution_is_running(execution: &Value) -> bool {
+        match execution["status"].as_str() {
+            Some("running" | "new" | "waiting") => true,
+            Some(_) => false,
+            // n8n answered without a status: `finished`/`stoppedAt` tell the rest.
+            None => execution["finished"] != true && execution["stoppedAt"].is_null(),
+        }
+    }
+
     async fn last_execution(&self, workflow_id: &str) -> Option<LastExecution> {
         let page = match self
             .expect_ok(
@@ -806,13 +820,14 @@ impl N8nApi {
             }
         };
         let execution = page["data"].as_array()?.first()?;
-        let status = match execution["status"].as_str() {
-            Some("success") => "success",
-            Some("running" | "new" | "waiting") => "running",
-            Some(_) => "error",
-            None if execution["finished"] == true => "success",
-            None if execution["stoppedAt"].is_null() => "running",
-            None => "error",
+        let status = if execution["status"].as_str() == Some("success")
+            || (execution["status"].is_null() && execution["finished"] == true)
+        {
+            "success"
+        } else if Self::execution_is_running(execution) {
+            "running"
+        } else {
+            "error"
         };
         Some(LastExecution {
             status,
@@ -843,21 +858,22 @@ impl N8nApi {
         }
     }
 
-    /// Whether n8n is running an execution of the workflow right now.
+    /// Whether n8n is running an execution of the workflow right now: same
+    /// mapping as [`Self::last_execution`] (see [`Self::execution_is_running`]),
+    /// so an email taken (`new`) or held by a Wait node (`waiting`) holds the
+    /// switch-off like a `running` one.
     async fn is_running(&self, workflow_id: &str) -> Result<bool, FlowError> {
         let page = self
             .expect_ok(
                 Method::GET,
                 "/executions",
-                &[
-                    ("workflowId", workflow_id),
-                    ("status", "running"),
-                    ("limit", "1"),
-                ],
+                &[("workflowId", workflow_id), ("limit", "1")],
                 None,
             )
             .await?;
-        Ok(page["data"].as_array().is_some_and(|data| !data.is_empty()))
+        Ok(page["data"]
+            .as_array()
+            .is_some_and(|data| data.iter().any(|e| Self::execution_is_running(e))))
     }
 
     /// Switches a workflow off once n8n runs no execution of it, so the one
@@ -2228,6 +2244,24 @@ mod tests {
         assert_eq!(derive_status(&off, Some(&dismissed)), "dismissed");
         // n8n switched it on elsewhere: what runs is shown, not the flag.
         assert_eq!(derive_status(&on, Some(&dismissed)), "active");
+    }
+
+    #[test]
+    fn an_email_taken_or_waiting_counts_as_running() {
+        // The one status mapping (`is_running`, `last_execution`,
+        // `retryable`): `new` is an email the trigger counted before its
+        // execution started, `waiting` one a Wait node holds — the
+        // executions [`RunningWait`] exists for.
+        for status in ["running", "new", "waiting"] {
+            assert!(N8nApi::execution_is_running(&json!({"status": status})));
+        }
+        for status in ["success", "error", "canceled"] {
+            assert!(!N8nApi::execution_is_running(&json!({"status": status})));
+        }
+        // n8n answered without a status: `finished`/`stoppedAt` tell the rest.
+        assert!(N8nApi::execution_is_running(&json!({"stoppedAt": null})));
+        assert!(!N8nApi::execution_is_running(&json!({"finished": true})));
+        assert!(!N8nApi::execution_is_running(&json!({"stoppedAt": "2026-10-17T09:00:20.000Z"})));
     }
 
     #[test]

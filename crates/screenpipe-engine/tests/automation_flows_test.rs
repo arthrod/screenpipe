@@ -135,12 +135,19 @@ impl FakeN8n {
     /// it finishes after n8n was asked about running executions `polls`
     /// times, or never.
     fn start_execution(&self, workflow_id: &str, polls: Option<u32>) {
+        self.start_execution_as(workflow_id, "running", polls)
+    }
+
+    /// The same, with n8n's status: the mail triggers count an email as
+    /// taken (`new`) before its execution starts, and a Wait node holds one
+    /// `waiting`.
+    fn start_execution_as(&self, workflow_id: &str, status: &str, polls: Option<u32>) {
         let mut state = self.0.lock().unwrap();
         let id = format!("exec{}", state.executions.len() + 1);
         state.executions.insert(
             0,
             json!({
-                "id": id, "workflowId": workflow_id, "status": "running",
+                "id": id, "workflowId": workflow_id, "status": status,
                 "startedAt": "2026-10-17T09:00:00.000Z", "stoppedAt": null,
                 "finishAfterPolls": polls
             }),
@@ -173,19 +180,15 @@ impl FakeN8n {
     }
 }
 
-/// How many times the fake n8n was asked for the running executions.
+/// How many times the fake n8n was asked for its executions: the switch-off
+/// polls, and the last-execution read of each Flow answer.
 async fn running_polls(server: &MockServer) -> usize {
     server
         .received_requests()
         .await
         .unwrap()
         .iter()
-        .filter(|r| {
-            r.url.path() == "/api/v1/executions"
-                && r.url
-                    .query_pairs()
-                    .any(|(key, value)| key == "status" && value == "running")
-        })
+        .filter(|r| r.url.path() == "/api/v1/executions")
         .count()
 }
 
@@ -461,19 +464,18 @@ impl Respond for FakeN8n {
             ("GET", ["executions"]) => {
                 let workflow_id = query("workflowId");
                 let status = query("status");
-                if status.as_deref() == Some("running") {
-                    // Each question brings a finishing execution closer to its end.
-                    for execution in state.executions.iter_mut() {
-                        let left = execution["finishAfterPolls"].as_u64();
-                        if execution["status"] != "running" || left.is_none() {
-                            continue;
-                        }
-                        if left == Some(0) {
-                            execution["status"] = json!("success");
-                            execution["stoppedAt"] = json!("2026-10-17T09:00:20.000Z");
-                        } else {
-                            execution["finishAfterPolls"] = json!(left.unwrap() - 1);
-                        }
+                // Each question brings a finishing execution closer to its end,
+                // whatever its status: time passes between the polls.
+                for execution in state.executions.iter_mut() {
+                    let left = execution["finishAfterPolls"].as_u64();
+                    if left.is_none() {
+                        continue;
+                    }
+                    if left == Some(0) {
+                        execution["status"] = json!("success");
+                        execution["stoppedAt"] = json!("2026-10-17T09:00:20.000Z");
+                    } else {
+                        execution["finishAfterPolls"] = json!(left.unwrap() - 1);
                     }
                 }
                 // Like n8n: at most `limit` (default 100), run data only
@@ -3215,11 +3217,59 @@ async fn switching_off_an_idle_flow_asks_n8n_once() {
 
     assert_eq!(status, StatusCode::OK, "{flow}");
     assert_eq!(flow["status"], "paused");
-    assert_eq!(running_polls(&server).await, 1);
+    // One poll to see nothing runs, plus the last-execution read of the
+    // answers; a wait loop would ask every 10 ms to the deadline.
+    assert_eq!(running_polls(&server).await, 4);
     assert_eq!(
         n8n_writes(&server).await.last().unwrap(),
         &format!("POST /api/v1/workflows/{id}/unpublish")
     );
+}
+
+#[tokio::test]
+async fn an_email_taken_or_waiting_holds_the_switch_off_like_a_running_one() {
+    // n8n's mail triggers count an email as taken (`new`) before its
+    // execution starts, and a Wait node holds one `waiting`: that is the
+    // email [`RunningWait`] exists for, so the switch-off must wait for
+    // those exactly like for a `running` one.
+    for taken in ["new", "waiting"] {
+        let (server, n8n) = start_fake_n8n().await;
+        let app = App::new().await;
+        app.configure_n8n(&server.uri());
+        let id = active_flow(&app).await;
+        n8n.start_execution_as(&id, taken, None);
+        let writes = n8n_writes(&server).await;
+
+        // Not the user's click: the wait may never end, nothing changes.
+        let (status, answer) = app
+            .call(
+                "POST",
+                &format!("/automation-flows/{id}/deactivate"),
+                Some(json!({})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{taken}: {answer}");
+        assert_eq!(answer["error"], "flow_running", "{taken}: {answer}");
+        assert_eq!(n8n_writes(&server).await, writes, "{taken}");
+        assert_eq!(n8n.orphaned(), Vec::<String>::new(), "{taken}");
+
+        // And a taken email that starts and finishes releases the switch-off
+        // without the user asking twice.
+        let (server, n8n) = start_fake_n8n().await;
+        let app = App::new().await;
+        app.configure_n8n(&server.uri());
+        let id = active_flow(&app).await;
+        n8n.start_execution_as(&id, taken, Some(2));
+
+        let (status, flow) = app
+            .ui_call("POST", &format!("/automation-flows/{id}/deactivate"), None)
+            .await;
+
+        assert_eq!(status, StatusCode::OK, "{taken}: {flow}");
+        assert_eq!(flow["status"], "paused", "{taken}");
+        assert!(running_polls(&server).await >= 3, "{taken}");
+        assert_eq!(n8n.orphaned(), Vec::<String>::new(), "{taken}");
+    }
 }
 
 // ---------------------------------------------------------------------------

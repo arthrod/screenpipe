@@ -653,11 +653,14 @@ describe("Review Screen", () => {
     expect((screen.getByRole("button", { name: "Turn on" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("asks to try again when n8n is still processing an email at Pause", async () => {
+  it("says a second Pause force-stops and loses the email being processed", async () => {
+    let pauses = 0;
     const api = fakeApi({
       get: vi.fn(async () => activeFlow),
       deactivate: vi.fn(async () => {
-        throw new FlowsApiError("flow_running", "n8n is still running this Flow");
+        pauses += 1;
+        if (pauses === 1) throw new FlowsApiError("flow_running", "n8n is still running this Flow");
+        return pausedFlow;
       }),
     });
     render(<FlowsTab flowId={fixtureFlow.id} onSelectFlow={vi.fn()} api={api} />);
@@ -666,8 +669,19 @@ describe("Review Screen", () => {
 
     const alert = await screen.findByRole("alert");
     expect(within(alert).getByText("Could not pause it")).toBeTruthy();
-    expect(within(alert).getByText(/still processing an email.*Try again in a moment/)).toBeTruthy();
+    expect(
+      within(alert).getByText(
+        /nothing changed yet\. Pause again to stop it anyway; the email n8n is processing will be lost/,
+      ),
+    ).toBeTruthy();
     expect(screen.getByTestId("flow-status").textContent).toBe("On");
+    expect((screen.getByRole("button", { name: "Pause" }) as HTMLButtonElement).disabled).toBe(false);
+
+    // The invited second click goes through, and busy resets.
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(screen.getByTestId("flow-status").textContent).toBe("Paused"));
+    expect(pauses).toBe(2);
+    expect((screen.getByRole("button", { name: "Turn on" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("says when the Flow was switched off outside Screenpipe", async () => {
@@ -924,10 +938,12 @@ describe("Deleting a Flow", () => {
   });
 
   it("asks to try again when n8n is still processing an email, and keeps the Flow", async () => {
+    let deletes = 0;
     const api = fakeApi({
       get: vi.fn(async () => activeFlow),
       delete: vi.fn(async () => {
-        throw new FlowsApiError("flow_running", "n8n is still running this Flow");
+        deletes += 1;
+        if (deletes === 1) throw new FlowsApiError("flow_running", "n8n is still running this Flow");
       }),
     });
     const onSelectFlow = vi.fn();
@@ -941,6 +957,11 @@ describe("Deleting a Flow", () => {
     expect(within(alert).getByText(/still handling an email.*Try again in a moment/)).toBeTruthy();
     expect(onSelectFlow).not.toHaveBeenCalled();
     expect(screen.getByTestId("flow-status").textContent).toBe("On");
+
+    // A deletion never force-stops: once n8n is done, the same click works.
+    fireEvent.click(screen.getByRole("button", { name: "Delete for good" }));
+    await waitFor(() => expect(onSelectFlow).toHaveBeenCalledWith(null));
+    expect(deletes).toBe(2);
   });
 
   it("says why n8n refused the deletion", async () => {

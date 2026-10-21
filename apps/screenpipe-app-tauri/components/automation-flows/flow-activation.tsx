@@ -13,9 +13,15 @@
 import React, { useState } from "react";
 import { FlowsApiError, type Flow, type FlowsApi } from "./api";
 
-// The engine waits for the email n8n is processing, then gives up unchanged.
+// What went wrong while n8n was processing an email. A Pause that came too
+// late still answers `flow_running`: the engine waited, nothing changed — and
+// a second Pause does not wait again: it stops anyway and the email n8n is
+// processing is lost (the engine's `user_stop`). Delete never force-stops, so
+// its copy only asks to try again.
 const FLOW_RUNNING_MESSAGE =
   "n8n is still processing an email with this Flow: nothing changed. Try again in a moment.";
+const PAUSE_RUNNING_MESSAGE =
+  "n8n is still processing an email with this Flow: nothing changed yet. Pause again to stop it anyway; the email n8n is processing will be lost.";
 
 type Action = "activate" | "deactivate" | "dismiss" | "restore";
 
@@ -103,7 +109,9 @@ export function FlowActivationNotices({ activation }: { activation: FlowActivati
     <div role="alert" className="space-y-1 border border-border p-3">
       <p className="text-sm font-medium">{FAILURE_TITLE[problem.action]}</p>
       {problem.error.code === "flow_running" ? (
-        <p className="text-sm text-muted-foreground">{FLOW_RUNNING_MESSAGE}</p>
+        <p className="text-sm text-muted-foreground">
+          {problem.action === "deactivate" ? PAUSE_RUNNING_MESSAGE : FLOW_RUNNING_MESSAGE}
+        </p>
       ) : (
         problem.error.detail && (
           <p className="break-all font-mono text-xs text-muted-foreground">{problem.error.detail}</p>

@@ -12,14 +12,17 @@ const DEMO_TASK = "wf-novadesk-support-tickets";
 
 type FakeWorkflow = { id: string; name: string; active: boolean; isArchived?: boolean; tags?: { name: string }[] };
 type Refusal = { status: number; message: string };
+type FakeExecution = { workflowId: string; status: string; finishAfterPolls?: number };
 
 /** n8n 2.x public API as far as reset uses it. Refuses what n8n would refuse:
  * archiving or deleting a workflow that is switched on, and (strict) deleting
  * one that is not archived. */
-function fakeN8n(initial: FakeWorkflow[], options: { strictArchive?: boolean; refuse?: Record<string, Refusal>; busyAfterUnpublish?: number } = {}) {
+function fakeN8n(initial: FakeWorkflow[], options: { strictArchive?: boolean; refuse?: Record<string, Refusal>; busyAfterUnpublish?: number; executions?: FakeExecution[] } = {}) {
   const workflows = new Map(initial.map(workflow => [workflow.id, { ...workflow }]));
   // n8n 2.x answers 409 to a delete while it is still unpublishing the workflow.
   const unpublishing = new Map<string, number>();
+  const executions = (options.executions ?? []).map(execution => ({ ...execution }));
+  let executionPolls = 0;
   const json = (status: number, body: unknown) => Response.json(body, { status });
   const server = Bun.serve({
     port: 0,
@@ -27,6 +30,17 @@ function fakeN8n(initial: FakeWorkflow[], options: { strictArchive?: boolean; re
     fetch(request) {
       if (request.headers.get("X-N8N-API-KEY") !== KEY) return json(401, { message: "unauthorized" });
       const url = new URL(request.url);
+      if (url.pathname === "/api/v1/executions") {
+        executionPolls += 1;
+        const workflowId = url.searchParams.get("workflowId");
+        // Each question brings a finishing execution closer to its end.
+        for (const execution of executions) {
+          if (execution.workflowId !== workflowId || execution.finishAfterPolls === undefined) continue;
+          if (execution.finishAfterPolls <= 0) execution.status = "success";
+          else execution.finishAfterPolls -= 1;
+        }
+        return json(200, { data: executions.filter(execution => execution.workflowId === workflowId), nextCursor: null });
+      }
       const [, id, action] = url.pathname.match(/^\/api\/v1\/workflows(?:\/([^/]+))?(?:\/([^/]+))?$/) ?? [];
       const refusal = options.refuse?.[`${request.method} ${action ?? ""} ${id}`.replace("  ", " ")];
       if (refusal) return json(refusal.status, { message: refusal.message });
@@ -61,7 +75,7 @@ function fakeN8n(initial: FakeWorkflow[], options: { strictArchive?: boolean; re
       return json(404, { message: "Not Found" });
     },
   });
-  return { url: `http://127.0.0.1:${server.port}`, workflows, stop: () => server.stop(true) };
+  return { url: `http://127.0.0.1:${server.port}`, workflows, polls: () => executionPolls, stop: () => server.stop(true) };
 }
 
 const record = (sourceTaskId: string | null) => ({
@@ -140,6 +154,48 @@ describe("demo reset", () => {
     });
 
     expect(report.failures).toEqual([]);
+    expect(n8n.workflows.size).toBe(0);
+  });
+
+  it("waits for the email n8n has taken before switching a Flow off, like the engine does", async () => {
+    // `new` is an email the trigger counted before its execution started;
+    // unpublishing mid-flight would lose it.
+    const n8n = serve([
+      { id: "spNovaFlow000001", name: "NovaDesk (import script)", active: true, tags: [{ name: "screenpipe-flow" }] },
+    ], {
+      strictArchive: true,
+      executions: [{ workflowId: "spNovaFlow000001", status: "new", finishAfterPolls: 2 }],
+    });
+    const lines: string[] = [];
+
+    const report = await resetDemo({
+      n8n: { url: n8n.url, apiKey: KEY }, dataDir: dataDir({}), catalogDir: catalogDir(),
+      runningWait: { interval: 10, deadline: 5_000 }, log: line => lines.push(line),
+    });
+
+    expect(report.failures).toEqual([]);
+    expect(n8n.polls()).toBeGreaterThanOrEqual(3);
+    expect(lines.join("\n")).not.toContain("still processing");
+    expect(n8n.workflows.size).toBe(0);
+  });
+
+  it("warns when it switches a Flow off while n8n still processes an execution", async () => {
+    const n8n = serve([
+      { id: "spNovaFlow000001", name: "NovaDesk (import script)", active: true, tags: [{ name: "screenpipe-flow" }] },
+    ], { strictArchive: true, executions: [{ workflowId: "spNovaFlow000001", status: "waiting" }] });
+    const lines: string[] = [];
+
+    const report = await resetDemo({
+      n8n: { url: n8n.url, apiKey: KEY }, dataDir: dataDir({}), catalogDir: catalogDir(),
+      runningWait: { interval: 10, deadline: 60 }, log: line => lines.push(line),
+    });
+
+    // The reset never blocks on a stuck execution, but says what it cut off.
+    expect(report.failures).toEqual([]);
+    expect(n8n.polls()).toBeGreaterThanOrEqual(2);
+    expect(lines.join("\n")).toContain("spNovaFlow000001");
+    expect(lines.join("\n")).toContain("still processing an execution");
+    expect(lines.join("\n")).toContain("may be lost");
     expect(n8n.workflows.size).toBe(0);
   });
 
