@@ -917,3 +917,7 @@
 :global(.dark) .commandSearch kbd, :global(.dark) .commandFooter kbd, :global(.dark) .commandShortcut kbd { border-color: hsl(var(--border)); background: hsl(var(--surface-secondary)); color: hsl(var(--muted-foreground)); }
 :global(.dark) .commandRowActive { background: hsl(var(--foreground)); color: hsl(var(--background)); }
 :global(.dark) .commandRowActive small { color: hsl(var(--muted-foreground)); }
+
+.catalogFilters { display:flex;flex-wrap:wrap;gap:16px;margin:0 0 20px;color:var(--muted);font-size:12px; }
+.catalogFilters select { background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:6px;font:inherit; }
+

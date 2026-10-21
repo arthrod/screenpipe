@@ -50,3 +50,5 @@ pub mod workflow_pipeline;
 pub(crate) mod workflow_workspace;
 
 pub mod starred;
+
+pub(crate) mod privacy_release;
