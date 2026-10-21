@@ -790,6 +790,8 @@ export function WorkflowDetail({ breadcrumb, relatedWorkflows, openRelated, edit
   );
 }
 
+type RankedBottleneck = WorkflowBottleneck & { workflowTitle: string; repetitions: number };
+
 /**
  * "Open automation" in the Task Page header, once an Automation Flow was
  * created from this task.
@@ -814,8 +816,6 @@ function OpenAutomationButton({ taskId, active, find, open }: {
   if (!flowId) return null;
   return <button className={styles.skillButton} type="button" onClick={() => void open(flowId).catch(() => {})}><Workflow size={14} aria-hidden="true" />Open automation</button>;
 }
-
-type RankedBottleneck = WorkflowBottleneck & { workflowTitle: string; repetitions: number };
 
 function BottleneckList({ items, openWorkflow, numbered = true }: { items: RankedBottleneck[]; openWorkflow?: (title: string) => void; numbered?: boolean }) {
   const ui = useGT();
