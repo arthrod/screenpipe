@@ -200,22 +200,37 @@ pub(super) async fn report_failure(
         report.error.as_deref(),
     );
     // A run is notified once, whether by this route or the health check (D19).
+    // A failing trigger has no run for the health check to re-list: its
+    // alert is named by the error (a stable fingerprint, not the clock),
+    // so a trigger failing on every poll is notified once, while a
+    // still-failing trigger re-reports — and is delivered — once a
+    // suppression lifts.
     let delivery = match execution.as_ref() {
         Some(execution) => {
             let stopped_at = execution["stoppedAt"].as_str();
             let run = execution["id"].as_str().unwrap_or_default();
             health::notify_run(&state, run, stopped_at, &notice).await
         }
-        None => match notify(&state, &notice).await {
-            Ok(()) => Delivery::Shown,
-            Err(Undelivered::Gated(reason)) => Delivery::Gated(reason),
-            Err(Undelivered::Unreachable(reason)) => Delivery::Unreachable(reason),
-        },
+        None => {
+            let run = trigger_key(&id, report.error.as_deref());
+            health::notify_run(&state, &run, None, &notice).await
+        }
     };
     Ok(Json(match delivery {
         Delivery::Shown => json!({"notified": true}),
         Delivery::AlreadyNotified => json!({"notified": false, "reason": "already notified"}),
-        Delivery::Gated(reason) | Delivery::Unreachable(reason) => {
+        Delivery::Gated(reason) => {
+            tracing::warn!("automation flows: failure of {id} not notified again: {reason}");
+            json!({"notified": false, "reason": reason})
+        }
+        Delivery::Suppressed(reason) => {
+            tracing::warn!(
+                "automation flows: failure of {id} held back by a notification \
+                 suppression ({reason}); re-delivered once it lifts"
+            );
+            json!({"notified": false, "reason": reason})
+        }
+        Delivery::Unreachable(reason) => {
             tracing::warn!("automation flows: failure of {id} not notified: {reason}");
             json!({"notified": false, "reason": reason})
         }
@@ -250,9 +265,12 @@ pub(super) fn failure_notice(
     lines.push("The Flow stays on.".to_string());
     let review = format!("screenpipe://flows/{flow_id}");
     let execution_id = execution.and_then(|e| e["id"].as_str());
+    // A failing trigger has no run id: its error names the alert (stable,
+    // so the notification server's repeat and history gates can hold a
+    // re-reported failure; the clock here made every poll a new alert).
     let run = execution_id
         .map(str::to_string)
-        .unwrap_or_else(|| format!("trigger-{}", chrono::Utc::now().timestamp_millis()));
+        .unwrap_or_else(|| format!("trigger-{}", error_fingerprint(reported_error)));
     let mut actions =
         vec![json!({"type": "deeplink", "label": "View Flow", "url": review, "primary": true})];
     // « Retry » (D17): the app's webview calls the retry route with its
@@ -307,13 +325,112 @@ pub(super) fn handled_email(result: &Value) -> Option<(String, String)> {
     Some((sender, subject))
 }
 
+/// A failing trigger's alert name: a short stable fingerprint of its
+/// error. The clock used to stand here, so every poll of a persistently
+/// failing trigger looked like a new alert (a toast and a history row each
+/// time); the error names it instead — the same failure is one alert, a
+/// new error a new one.
+fn error_fingerprint(error: Option<&str>) -> String {
+    const UNKNOWN: &str = "unknown error";
+    let error = error
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+        .unwrap_or(UNKNOWN);
+    format!("{:08x}", fnv1a(error.as_bytes()))
+}
+
+/// The ledger's id for a failing trigger of Flow `flow_id`: n8n execution
+/// ids are numeric, so this cannot collide with a run's.
+fn trigger_key(flow_id: &str, error: Option<&str>) -> String {
+    format!("trigger:{flow_id}:{}", error_fingerprint(error))
+}
+
+/// FNV-1a, as the shipped workflows hash their dedup keys: short, stable,
+/// and no more than an alert name needs.
+fn fnv1a(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c_9dc5_u32;
+    for byte in bytes {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
+}
+
 /// Why a notification is not shown.
 pub(super) enum Undelivered {
-    /// The notification server took it and applied a delivery gate (pause,
-    /// quiet hours, a repeat).
+    /// The user already saw this alert: the notification server dropped it
+    /// as a repeat, or already held its id in history. Terminal — the run
+    /// is recorded as notified and never retried.
     Gated(String),
-    /// The notification server did not take it (down, or an error).
+    /// The notification server took the alert but suppressed it (quiet
+    /// hours, snooze, master off, the pipe-notifications toggle, a
+    /// per-pipe mute): nothing survives the suppression — no panel, no
+    /// history row — so the run stays unnotified and is re-delivered once
+    /// the suppression lifts.
+    Suppressed(String),
+    /// The notification server did not take it (down, or an error): the
+    /// run is re-delivered at the next check.
     Unreachable(String),
+}
+
+/// The machine-readable outcomes the app's notification server reports in
+/// the `outcome` field of its `/notify` answers, naming what it did with
+/// the alert so the engine never classifies a delivery by reading the
+/// English `message` copy (app builds without the field are read through
+/// the copy, pinned below).
+mod outcome {
+    pub const SHOWN: &str = "shown";
+    pub const DUPLICATE: &str = "duplicate";
+    /// Quiet hours, snooze, master off.
+    pub const PAUSED: &str = "paused";
+    pub const PIPE_DISABLED: &str = "pipe_disabled";
+    pub const MUTED: &str = "muted";
+}
+
+/// How the notification server answered `/notify`.
+///
+/// The machine-readable `outcome` field decides when the app sends one;
+/// otherwise the app's `message` copy decides, and that copy is pinned by
+/// the tests below — a wording change on either side cannot silently
+/// reclassify a delivery (an unrecognized 2xx answer is retried, never
+/// dropped, and surfaces in the health report's pending runs).
+fn classify(status: reqwest::StatusCode, answer: &Value) -> Result<(), Undelivered> {
+    let message = answer["message"].as_str();
+    let suppressed = |message: &str| Undelivered::Suppressed(message.to_string());
+    if !status.is_success() {
+        return Err(Undelivered::Unreachable(
+            message
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("notification server answered {status}")),
+        ));
+    }
+    if let Some(outcome) = answer["outcome"].as_str() {
+        return match outcome {
+            outcome::SHOWN => Ok(()),
+            outcome::DUPLICATE => Err(Undelivered::Gated(
+                message.unwrap_or(outcome).to_string(),
+            )),
+            other => Err(suppressed(message.unwrap_or(other))),
+        };
+    }
+    match message {
+        Some("Notification sent successfully") => Ok(()),
+        // The user already saw the alert: never retried.
+        Some("duplicate notification suppressed" | "Notification already sent") => {
+            Err(Undelivered::Gated(message.unwrap().to_string()))
+        }
+        // The alert was taken but suppressed: retried once it lifts.
+        Some("notifications paused" | "pipe notifications disabled" | "pipe muted") => {
+            Err(suppressed(message.unwrap()))
+        }
+        // An answer this engine does not know: retried, never silently
+        // dropped (the health report lists it as pending until the server
+        // says what it was).
+        Some(other) => Err(suppressed(other)),
+        None => Err(Undelivered::Unreachable(format!(
+            "notification server answered {status} without a message"
+        ))),
+    }
 }
 
 /// Sends `notice` to the app's notification server.
@@ -327,14 +444,7 @@ pub(super) async fn notify(state: &FlowsState, notice: &Value) -> Result<(), Und
         .map_err(|e| Undelivered::Unreachable(format!("notification server unreachable: {e}")))?;
     let status = response.status();
     let answer: Value = response.json().await.unwrap_or(Value::Null);
-    match answer["message"].as_str() {
-        Some("Notification sent successfully") if status.is_success() => Ok(()),
-        Some(message) if status.is_success() => Err(Undelivered::Gated(message.to_string())),
-        Some(message) => Err(Undelivered::Unreachable(message.to_string())),
-        None => Err(Undelivered::Unreachable(format!(
-            "notification server answered {status}"
-        ))),
-    }
+    classify(status, &answer)
 }
 
 /// Makes the Flow about to be written to n8n (`body`) name ScreenPipe's
@@ -350,5 +460,126 @@ pub(super) async fn name_error_workflow(state: &FlowsState, api: &N8nApi, body: 
         }
         Ok(None) => {}
         Err(e) => tracing::warn!("automation flows: error workflow unavailable: {e:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OK: reqwest::StatusCode = reqwest::StatusCode::OK;
+    const SERVER_ERROR: reqwest::StatusCode = reqwest::StatusCode::INTERNAL_SERVER_ERROR;
+
+    #[test]
+    fn every_answer_of_the_notification_server_classifies_as_it_delivered() {
+        // The copy the app's notification server sends today (app builds
+        // without the machine-readable `outcome` field): pinned, so a
+        // wording change there cannot silently reclassify a delivery here.
+        assert!(matches!(
+            classify(OK, &json!({"success": true, "message": "Notification sent successfully"})),
+            Ok(())
+        ));
+        // Suppressions — quiet hours, snooze, master off, the pipe toggle,
+        // a per-pipe mute — eat the panel and the history row alike:
+        // retryable, and nothing is recorded as notified.
+        for message in [
+            "notifications paused",
+            "pipe notifications disabled",
+            "pipe muted",
+        ] {
+            assert!(
+                matches!(classify(OK, &json!({"message": message})), Err(Undelivered::Suppressed(_))),
+                "{message} must be retryable"
+            );
+        }
+        // The user already saw the alert (a repeat, or already in history):
+        // terminal, never retried.
+        for message in [
+            "duplicate notification suppressed",
+            "Notification already sent",
+        ] {
+            assert!(
+                matches!(classify(OK, &json!({"message": message})), Err(Undelivered::Gated(_))),
+                "{message} must be terminal"
+            );
+        }
+        // An answer this engine does not know: retried, never silently
+        // dropped (the health report lists it as pending until the server
+        // says what it was).
+        assert!(matches!(
+            classify(OK, &json!({"message": "an answer the next app sends"})),
+            Err(Undelivered::Suppressed(_))
+        ));
+        // The server refused, or broke: retried.
+        assert!(matches!(
+            classify(SERVER_ERROR, &json!({"message": "boom"})),
+            Err(Undelivered::Unreachable(_))
+        ));
+        assert!(matches!(
+            classify(OK, &Value::Null),
+            Err(Undelivered::Unreachable(_))
+        ));
+    }
+
+    #[test]
+    fn the_outcome_field_classifies_the_answer_not_the_copy() {
+        // Whatever the English (or French) copy says, the machine-readable
+        // `outcome` decides.
+        assert!(matches!(
+            classify(OK, &json!({"message": "envoyé", "outcome": "shown"})),
+            Ok(())
+        ));
+        assert!(matches!(
+            classify(OK, &json!({"message": "heures creuses", "outcome": "paused"})),
+            Err(Undelivered::Suppressed(reason)) if reason == "heures creuses"
+        ));
+        assert!(matches!(
+            classify(OK, &json!({"message": "coupé", "outcome": "pipe_disabled"})),
+            Err(Undelivered::Suppressed(_))
+        ));
+        assert!(matches!(
+            classify(OK, &json!({"message": "silencieux", "outcome": "muted"})),
+            Err(Undelivered::Suppressed(_))
+        ));
+        assert!(matches!(
+            classify(OK, &json!({"message": "déjà vu", "outcome": "duplicate"})),
+            Err(Undelivered::Gated(_))
+        ));
+        // An outcome this engine does not know yet: retryable, never a
+        // silent loss.
+        assert!(matches!(
+            classify(OK, &json!({"message": "…", "outcome": "whatever the next app sends"})),
+            Err(Undelivered::Suppressed(_))
+        ));
+        // A non-2xx answer is never a delivery, whatever it claims.
+        assert!(matches!(
+            classify(
+                reqwest::StatusCode::BAD_REQUEST,
+                &json!({"message": "bad payload", "outcome": "shown"})
+            ),
+            Err(Undelivered::Unreachable(_))
+        ));
+    }
+
+    #[test]
+    fn a_failing_trigger_names_one_stable_alert_per_error() {
+        // Same error → one alert (a trigger failing on every poll notifies
+        // once); a new error → a new alert; another Flow's same error → its
+        // own alert; no error → the notice's fallback.
+        let key = trigger_key("wf1", Some("Invalid credentials (Failure)"));
+        assert_eq!(
+            key,
+            trigger_key("wf1", Some("Invalid credentials (Failure)"))
+        );
+        assert_ne!(key, trigger_key("wf1", Some("IMAP server unreachable")));
+        assert_ne!(key, trigger_key("wf2", Some("Invalid credentials (Failure)")));
+        assert_eq!(trigger_key("wf1", Some("  ")), trigger_key("wf1", None));
+        // The notice's id carries the same name, without the clock.
+        let fingerprint = error_fingerprint(Some("Invalid credentials (Failure)"));
+        let notice = failure_notice("wf1", "Support", None, Some("Invalid credentials (Failure)"));
+        assert_eq!(
+            notice["id"],
+            format!("automation-flow-failure:wf1:trigger-{fingerprint}")
+        );
     }
 }

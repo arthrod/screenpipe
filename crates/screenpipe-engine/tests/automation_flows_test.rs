@@ -4167,6 +4167,189 @@ async fn only_a_run_of_that_flow_is_notified() {
     assert!(notifications(&app).await.is_empty());
 }
 
+/// The app's notification server answering `answer` to every `/notify`
+/// (200 with the given body, as the delivery gates answer).
+async fn answer_notifications(app: &App, answer: Value) {
+    app.notify.reset().await;
+    Mock::given(any())
+        .respond_with(json_response(200, answer))
+        .mount(&app.notify)
+        .await;
+}
+
+/// The app's notification server delivering again.
+async fn deliver_notifications(app: &App) {
+    answer_notifications(
+        app,
+        json!({"success": true, "message": "Notification sent successfully"}),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_failed_run_while_notifications_are_paused_is_delivered_once_the_pause_lifts() {
+    // Quiet hours, snooze, master off: the notification server answers
+    // 200 "notifications paused" and shows nothing — no panel, no history
+    // row. The run must stay pending and be delivered at the first check
+    // after the pause lifts, once.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    n8n.add_execution(failed_run_ago("exec-quiet", &id, chrono::Duration::zero()));
+    answer_notifications(
+        &app,
+        json!({"success": true, "message": "notifications paused"}),
+    )
+    .await;
+
+    let report = health_check(&app).await;
+    assert_eq!(report["notified"], json!([]), "{report}");
+    assert_eq!(report["pendingNotifications"], json!(["exec-quiet"]), "{report}");
+
+    // The pause lifts: the run is delivered at the next check, once.
+    deliver_notifications(&app).await;
+    assert_eq!(health_check(&app).await["notified"], json!(["exec-quiet"]));
+    assert_eq!(health_check(&app).await["notified"], json!([]));
+    assert_eq!(
+        notice_ids(&notifications(&app).await),
+        [format!("automation-flow-failure:{id}:exec-quiet")]
+    );
+}
+
+#[tokio::test]
+async fn a_failure_reported_while_notifications_are_paused_is_re_delivered_after_the_pause() {
+    // The error workflow's report (D16) during the pause must not record
+    // the run as notified: the health check still delivers it afterwards.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    n8n.add_execution(failed_run_ago("exec-live", &id, chrono::Duration::zero()));
+    answer_notifications(
+        &app,
+        json!({"success": true, "message": "notifications paused"}),
+    )
+    .await;
+
+    let (status, answer) = app
+        .call(
+            "POST",
+            &format!("/automation-flows/{id}/failures"),
+            Some(json!({"executionId": "exec-live", "error": "503"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["notified"], false, "{answer}");
+
+    // The pause lifts: the check delivers the run — the suppressed answer
+    // left it unrecorded.
+    deliver_notifications(&app).await;
+    assert_eq!(health_check(&app).await["notified"], json!(["exec-live"]));
+    assert_eq!(notifications(&app).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_run_the_user_already_saw_is_never_delivered_again() {
+    // "duplicate notification suppressed" / "Notification already sent"
+    // mean the user saw the alert: the run is done, never retried — unlike
+    // the pause answers, which suppress everything and must be retried.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    n8n.add_execution(failed_run_ago("exec-seen", &id, chrono::Duration::zero()));
+    answer_notifications(
+        &app,
+        json!({"success": true, "message": "duplicate notification suppressed"}),
+    )
+    .await;
+
+    let report = health_check(&app).await;
+    assert_eq!(report["notified"], json!(["exec-seen"]), "{report}");
+    assert_eq!(report["pendingNotifications"], json!([]), "{report}");
+    assert_eq!(health_check(&app).await["notified"], json!([]));
+    assert_eq!(notifications(&app).await.len(), 1);
+}
+
+#[tokio::test]
+async fn the_outcome_field_classifies_the_answer_not_the_english_copy() {
+    // The app names what it did with the alert in the machine-readable
+    // `outcome` field; the English `message` copy is only a fallback for
+    // app builds without it. A wording change on either side must not
+    // reclassify a delivery.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    n8n.add_execution(failed_run_ago("exec-live", &id, chrono::Duration::zero()));
+
+    // Suppression, said in French: the machine-readable outcome decides.
+    answer_notifications(
+        &app,
+        json!({"success": true, "message": "heures creuses", "outcome": "paused"}),
+    )
+    .await;
+    let (status, answer) = app
+        .call(
+            "POST",
+            &format!("/automation-flows/{id}/failures"),
+            Some(json!({"executionId": "exec-live", "error": "503"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["notified"], false, "{answer}");
+
+    // Delivery, said in French: shown.
+    answer_notifications(
+        &app,
+        json!({"success": true, "message": "envoyé", "outcome": "shown"}),
+    )
+    .await;
+    assert_eq!(health_check(&app).await["notified"], json!(["exec-live"]));
+    assert_eq!(notifications(&app).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_persistently_failing_trigger_is_notified_once_not_on_every_poll() {
+    // n8n's error workflow reports a failing trigger on every poll. The
+    // notice's id used to carry the clock, so every report looked like a
+    // new alert (a toast and a history row each time); the error names the
+    // alert now: the same failing trigger is notified once, a new error is
+    // a new alert.
+    let (server, _n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    let report = |error: &str| {
+        let uri = format!("/automation-flows/{id}/failures");
+        let body = json!({"executionId": null, "error": error});
+        let app = &app;
+        async move { app.call("POST", &uri, Some(body)).await }
+    };
+
+    let (status, answer) = report("Invalid credentials (Failure)").await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["notified"], true, "{answer}");
+
+    // The same failure, reported again by the next poll: already notified.
+    let (_, again) = report("Invalid credentials (Failure)").await;
+    assert_eq!(again["notified"], false, "{again}");
+    assert_eq!(again["reason"], "already notified", "{again}");
+    assert_eq!(notifications(&app).await.len(), 1);
+
+    // A different failure of the same trigger is a new alert.
+    let (_, other) = report("IMAP server unreachable").await;
+    assert_eq!(other["notified"], true, "{other}");
+    let sent = notifications(&app).await;
+    assert_eq!(sent.len(), 2);
+    assert_ne!(sent[0]["id"], sent[1]["id"]);
+    assert!(sent[0]["id"]
+        .as_str()
+        .unwrap()
+        .starts_with(&format!("automation-flow-failure:{id}:trigger-")));
+}
+
 // ---------------------------------------------------------------------------
 // Flow Activity on the Review Screen (D18, ticket 13)
 // ---------------------------------------------------------------------------

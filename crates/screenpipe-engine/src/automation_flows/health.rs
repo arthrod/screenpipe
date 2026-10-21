@@ -93,6 +93,12 @@ impl Pacing {
 pub(super) struct Health {
     last: Mutex<Option<HealthReport>>,
     ledger: Mutex<()>,
+    /// Failed runs the last checks could not deliver, and why: the log
+    /// says "will retry" while the backoff is still short, and warns once
+    /// a run has stayed pending for [`PENDING_WARN_CHECKS`] checks — the
+    /// notification path is then broken (or the suppression very long),
+    /// not merely busy.
+    pending: std::sync::Mutex<PendingRuns>,
     /// When this engine started: without a ledger, checks look no further back.
     started_at: chrono::DateTime<chrono::Utc>,
 }
@@ -102,8 +108,61 @@ impl Default for Health {
         Self {
             last: Mutex::new(None),
             ledger: Mutex::new(()),
+            pending: std::sync::Mutex::new(PendingRuns::default()),
             started_at: chrono::Utc::now(),
         }
+    }
+}
+
+/// After how many consecutive checks a still-pending run is warned about:
+/// the retry backoff reaches ~8 minutes by then, so "will retry soon"
+/// (debug) is no longer the honest reading.
+const PENDING_WARN_CHECKS: u32 = 5;
+
+/// Failed runs still undelivered at the last checks.
+#[derive(Default)]
+struct PendingRuns {
+    runs: std::collections::HashMap<String, PendingRun>,
+}
+
+#[derive(Default)]
+struct PendingRun {
+    checks: u32,
+    reason: String,
+}
+
+impl PendingRuns {
+    /// A check saw `id` still pending for `reason`: whether this is the
+    /// check to warn at (once, not on every check after it).
+    fn still_pending(&mut self, id: &str, reason: &str) -> bool {
+        let run = self.runs.entry(id.to_string()).or_default();
+        run.checks = run.checks.saturating_add(1);
+        run.reason = reason.to_string();
+        run.checks == PENDING_WARN_CHECKS
+    }
+
+    /// Keeps only the runs `pending` still lists: the others were
+    /// delivered (or terminal) at this check.
+    fn resolved_except(&mut self, pending: &[(String, String)]) {
+        let still: std::collections::HashSet<&str> =
+            pending.iter().map(|(id, _)| id.as_str()).collect();
+        self.runs.retain(|id, _| still.contains(id.as_str()));
+    }
+}
+
+impl Health {
+    /// Records which failed runs are still undelivered after this check.
+    fn note_pending(&self, pending: &[(String, String)]) {
+        let mut runs = self.pending.lock().expect("pending runs");
+        for (id, reason) in pending {
+            if runs.still_pending(id, reason) {
+                tracing::warn!(
+                    "automation flows: failed run {id} not notified for \
+                     {PENDING_WARN_CHECKS} checks ({reason})"
+                );
+            }
+        }
+        runs.resolved_except(pending);
     }
 }
 
@@ -198,9 +257,15 @@ pub(super) enum Delivery {
     Shown,
     /// Notified before, by the health check or the error workflow.
     AlreadyNotified,
-    /// The notification server took it but did not show it (pause, quiet
-    /// hours, a repeat): handled, never retried.
+    /// The user already saw this alert (the notification server dropped
+    /// it as a repeat, or already held its id in history): handled, never
+    /// retried.
     Gated(String),
+    /// The notification server took the alert but suppressed it (quiet
+    /// hours, snooze, master off, the pipe toggle, a per-pipe mute):
+    /// nothing survives the suppression, so the run stays unrecorded and
+    /// is re-delivered — panel and history — once the suppression lifts.
+    Suppressed(String),
     /// The notification server did not answer: retried at the next check.
     Unreachable(String),
 }
@@ -235,6 +300,10 @@ async fn notify_once(
     let delivery = match notify(state, notice).await {
         Ok(()) => Delivery::Shown,
         Err(Undelivered::Gated(reason)) => Delivery::Gated(reason),
+        // A suppression (or an unreachable server) records nothing: the
+        // run is re-delivered at the next checks until it goes through —
+        // the pacing below backs off between them.
+        Err(Undelivered::Suppressed(reason)) => return Delivery::Suppressed(reason),
         Err(Undelivered::Unreachable(reason)) => return Delivery::Unreachable(reason),
     };
     let at = stopped_at
@@ -373,6 +442,8 @@ async fn report_failed_runs(
     let store = FlowStore::load(dir)?;
     let mut ledger = Ledger::load(dir);
     let since = ledger.since(state.health.started_at);
+    // The runs this check could not deliver, and why (for the log).
+    let mut pending: Vec<(String, String)> = Vec::new();
     for workflow in workflows {
         let Some(flow_id) = workflow["id"].as_str() else {
             continue;
@@ -424,11 +495,20 @@ async fn report_failed_runs(
             match notify_once(state, &mut ledger, execution_id, stopped_at, &notice).await {
                 Delivery::Shown | Delivery::Gated(_) => report.notified.push(execution_id.into()),
                 Delivery::AlreadyNotified => {}
+                Delivery::Suppressed(reason) => {
+                    tracing::debug!(
+                        "automation flows: failed run {execution_id} held back by a \
+                         notification suppression ({reason}); will retry"
+                    );
+                    report.pending.push(execution_id.into());
+                    pending.push((execution_id.into(), reason));
+                }
                 Delivery::Unreachable(reason) => {
                     tracing::debug!(
                         "automation flows: failed run {execution_id} not notified yet: {reason}"
                     );
                     report.pending.push(execution_id.into());
+                    pending.push((execution_id.into(), reason));
                 }
             }
         }
@@ -439,6 +519,7 @@ async fn report_failed_runs(
     }
     ledger.prune(state.health.started_at);
     ledger.save(dir);
+    state.health.note_pending(&pending);
     Ok(())
 }
 
@@ -482,5 +563,30 @@ mod tests {
         // Delivered: back to the schedule, and a new miss starts over.
         assert_eq!(pacing.next_delay(&fine), Duration::from_secs(900));
         assert_eq!(pacing.next_delay(&missed), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn a_run_pending_across_checks_warns_once_not_on_every_check() {
+        // "Will retry soon" stays a debug note; only a run still pending
+        // after PENDING_WARN_CHECKS checks is warned about — once.
+        let mut pending = PendingRuns::default();
+        let undelivered = vec![(
+            "exec-1".to_string(),
+            "notification server unreachable".to_string(),
+        )];
+        for check in 1..=PENDING_WARN_CHECKS + 2 {
+            assert_eq!(
+                pending.still_pending("exec-1", "notification server unreachable"),
+                check == PENDING_WARN_CHECKS,
+                "check {check}"
+            );
+        }
+        // A second run joins without resetting the first.
+        assert!(!pending.still_pending("exec-2", "notifications paused"));
+        assert_eq!(pending.runs["exec-2"].reason, "notifications paused");
+        // Delivered at the next check: its streak is forgotten.
+        pending.resolved_except(&undelivered);
+        assert!(!pending.runs.contains_key("exec-2"));
+        assert_eq!(pending.runs["exec-1"].checks, PENDING_WARN_CHECKS + 2);
     }
 }

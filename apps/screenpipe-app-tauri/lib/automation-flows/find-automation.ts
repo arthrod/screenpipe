@@ -52,9 +52,14 @@ export async function findAutomation(deps: FindAutomationDeps): Promise<FindAuto
   } catch (error) {
     return { notified: false, reason: error instanceof Error ? error.message : String(error) };
   }
-  const result = await response.json().catch(() => ({})) as { message?: string };
+  const result = await response.json().catch(() => ({})) as { message?: string; outcome?: string };
   // Delivery gates (duplicate within 90 s, pause, quiet hours) answer 200 with a reason.
-  if (!response.ok || result.message !== "Notification sent successfully") {
+  // The machine-readable `outcome` decides when the server sends one; older
+  // servers are read through the pinned "Notification sent successfully" copy.
+  const shown = response.ok && (result.outcome !== undefined
+    ? result.outcome === "shown"
+    : result.message === "Notification sent successfully");
+  if (!shown) {
     return { notified: false, reason: result.message ?? `HTTP ${response.status}` };
   }
   return { notified: true };

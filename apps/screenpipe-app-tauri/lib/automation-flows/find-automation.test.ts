@@ -105,6 +105,19 @@ describe("findAutomation (scripted demo detection)", () => {
     expect(d.saveCatalog).toHaveBeenCalledTimes(1);
   });
 
+  it("reads the machine-readable delivery outcome, whatever the copy says", async () => {
+    // The server names what it did with the alert in `outcome`; the English
+    // `message` copy is only the fallback for older servers.
+    const paused = deps({ notify: vi.fn(async () => json({ success: true, message: "repos", outcome: "paused" })) });
+    await expect(findAutomation(paused.deps)).resolves.toEqual({ notified: false, reason: "repos" });
+
+    const shown = deps({ notify: vi.fn(async () => json({ success: true, message: "envoyé", outcome: "shown" })) });
+    await expect(findAutomation(shown.deps)).resolves.toEqual({ notified: true });
+
+    const duplicate = deps({ notify: vi.fn(async () => json({ success: true, message: "déjà affiché", outcome: "duplicate" })) });
+    await expect(findAutomation(duplicate.deps)).resolves.toEqual({ notified: false, reason: "déjà affiché" });
+  });
+
   it("reports why the notification server could not be asked", async () => {
     const { deps: d } = deps({ notify: vi.fn(async () => { throw new Error("the server does not answer"); }) });
     await expect(findAutomation(d)).resolves.toEqual({ notified: false, reason: "the server does not answer" });
