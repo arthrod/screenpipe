@@ -29,7 +29,11 @@ fi
 bun scripts/pre_build.js
 
 rm -rf "src-tauri/target/$PROFILE/bundle"
-APPLE_SIGNING_IDENTITY="$IDENTITY" \
+# rustc's built-in strip (profile `strip = true`) writes a LINKEDIT string pool
+# that is not 8-byte aligned; dyld on macOS 27 refuses to load such dylibs,
+# which breaks proc-macros (sqlx-macros) mid-build. Ship unstripped instead.
+PROFILE_ENV="CARGO_PROFILE_$(echo "$PROFILE" | tr '[:lower:]-' '[:upper:]_')_STRIP"
+env "$PROFILE_ENV=false" APPLE_SIGNING_IDENTITY="$IDENTITY" \
   bun tauri build --bundles app -- --profile "$PROFILE" --features "$FEATURES"
 
 APP_PATH="src-tauri/target/$PROFILE/bundle/macos/screenpipe.app"
