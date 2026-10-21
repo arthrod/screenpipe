@@ -87,7 +87,7 @@ export const desktopGuideVideo: GuideVideoPlatform = {
             redacting = true;
           }
         }
-        if (!frameId && !redacting && !scene.image) throw new Error(`The recording for “${scene.title}” is unavailable. Choose another screenshot before creating the video.`);
+        if (!frameId && !redacting && scene.imageSources?.length) throw new Error(`The recording for “${scene.title}” is unavailable. Choose another screenshot before creating the video.`);
         if (frameId && !images.has(frameId)) {
           try { images.set(frameId, await loadVideoScreenshot(frameId, signal)); }
           catch (error) {
