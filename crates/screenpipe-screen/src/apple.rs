@@ -13,11 +13,99 @@ use image::GenericImageView;
 use screenpipe_core::Language;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::{ffi::c_void, ptr::null_mut};
 use tracing::{error, warn};
 
 static APPLE_LANGUAGE_MAP: OnceLock<HashMap<Language, &'static str>> = OnceLock::new();
+
+/// Consecutive accurate-recognition failures after which this process uses
+/// the fast recognizer only.
+#[cfg(target_os = "macos")]
+const ACCURATE_FAILURES_BEFORE_FAST_ONLY: u32 = 3;
+
+/// Whether to try Vision's accurate recognizer.
+///
+/// The accurate recognizer runs a model that Apple's ML runtime (E5RT) compiles
+/// into `~/Library/Caches/<bundle>/com.apple.e5rt.e5bundlecache`. If those files
+/// are removed while the process runs (macOS purges caches under disk pressure),
+/// every accurate request fails for the rest of the process
+/// (`CRImageReaderError` 1, E5RT code 13) while the fast recognizer keeps
+/// working; a new process recompiles the cache. Each failed frame is retried
+/// with the fast recognizer. A failure counts only when that retry succeeds, so
+/// an image Vision rejects at both levels never disables accurate; after enough
+/// consecutive counted failures the process stops trying accurate.
+#[cfg(target_os = "macos")]
+struct AccurateGate {
+    consecutive_failures: AtomicU32,
+    disabled: AtomicBool,
+}
+
+#[cfg(target_os = "macos")]
+impl AccurateGate {
+    const fn new() -> Self {
+        Self {
+            consecutive_failures: AtomicU32::new(0),
+            disabled: AtomicBool::new(false),
+        }
+    }
+
+    fn should_try(&self) -> bool {
+        !self.disabled.load(Ordering::Relaxed)
+    }
+
+    fn record_success(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
+
+    /// Returns true when this failure is the one that disabled accurate recognition.
+    fn record_failure(&self) -> bool {
+        let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+        failures >= ACCURATE_FAILURES_BEFORE_FAST_ONLY
+            && !self.disabled.swap(true, Ordering::Relaxed)
+    }
+}
+
+#[cfg(target_os = "macos")]
+static ACCURATE_GATE: AccurateGate = AccurateGate::new();
+
+#[cfg(target_os = "macos")]
+fn new_text_request(
+    languages: &ns::Array<ns::String>,
+    level: vn::RequestTextRecognitionLevel,
+) -> cidre::arc::R<RecognizeTextRequest> {
+    let mut request = RecognizeTextRequest::new();
+    request.set_recognition_langs(languages);
+    request.set_uses_lang_correction(false);
+    request.set_recognition_level(level);
+    request
+}
+
+/// `Ok(true)` when Vision performed the request, `Ok(false)` when it returned NO
+/// without an NSError (a normal OCR miss), `Err` with the NSError otherwise.
+#[cfg(target_os = "macos")]
+fn perform_text_request(
+    handler: &ImageRequestHandler,
+    request: &RecognizeTextRequest,
+) -> Result<bool, String> {
+    let requests = ns::Array::<vn::Request>::from_slice(&[request]);
+    // Apple documents the BOOL/nil return value as the success signal for
+    // NSError-by-reference APIs: "Success or failure is indicated by the
+    // return value of the method." The NSError out-param is diagnostic.
+    // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ErrorHandlingCocoa/CreateCustomizeNSError/CreateCustomizeNSError.html
+    //
+    // Use the raw API so a false return with no NSError is still a normal
+    // OCR miss instead of going through cidre's convenience wrapper.
+    let mut perform_error = None;
+    let performed = unsafe { handler.perform_request_err(&requests, &mut perform_error) };
+    match (performed, perform_error) {
+        (true, _) => Ok(true),
+        (false, Some(error)) => Err(error.to_string()),
+        (false, None) => Ok(false),
+    }
+}
 
 pub fn get_apple_languages(languages: &[Language]) -> Vec<String> {
     let map = APPLE_LANGUAGE_MAP.get_or_init(|| {
@@ -176,26 +264,47 @@ pub fn perform_ocr_apple(
                 return default_ocr_result;
             }
         };
-        let mut request = RecognizeTextRequest::new();
-        request.set_recognition_langs(&languages_array);
-        request.set_uses_lang_correction(false);
-        let requests = ns::Array::<vn::Request>::from_slice(&[&request]);
-        // Apple documents the BOOL/nil return value as the success signal for
-        // NSError-by-reference APIs: "Success or failure is indicated by the
-        // return value of the method." The NSError out-param is diagnostic.
-        // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ErrorHandlingCocoa/CreateCustomizeNSError/CreateCustomizeNSError.html
-        //
-        // Use the raw API so a false return with no NSError is still a normal
-        // OCR miss instead of going through cidre's convenience wrapper.
-        let mut perform_error = None;
-        let performed = unsafe { handler.perform_request_err(&requests, &mut perform_error) };
-        if !performed {
-            if let Some(error) = perform_error {
-                warn!("Apple Vision OCR request failed: {}", error);
-            } else {
-                warn!("Apple Vision OCR request failed without NSError");
+        let try_accurate = ACCURATE_GATE.should_try();
+        let level = if try_accurate {
+            vn::RequestTextRecognitionLevel::Accurate
+        } else {
+            vn::RequestTextRecognitionLevel::Fast
+        };
+        let mut request = new_text_request(&languages_array, level);
+        let mut performed = perform_text_request(&handler, &request);
+        if try_accurate {
+            match &performed {
+                Ok(true) => ACCURATE_GATE.record_success(),
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(
+                        "Apple Vision OCR request failed: {}; retrying with fast recognition",
+                        error
+                    );
+                    request =
+                        new_text_request(&languages_array, vn::RequestTextRecognitionLevel::Fast);
+                    performed = perform_text_request(&handler, &request);
+                    // Fast succeeding where accurate failed means the accurate
+                    // model is what broke, not the image.
+                    if matches!(performed, Ok(true)) && ACCURATE_GATE.record_failure() {
+                        warn!(
+                            "Apple Vision accurate OCR failed {} frames in a row while fast recognition worked; using fast recognition until restart",
+                            ACCURATE_FAILURES_BEFORE_FAST_ONLY
+                        );
+                    }
+                }
             }
-            return default_ocr_result;
+        }
+        match performed {
+            Ok(true) => {}
+            Ok(false) => {
+                warn!("Apple Vision OCR request failed without NSError");
+                return default_ocr_result;
+            }
+            Err(error) => {
+                warn!("Apple Vision OCR request failed: {}", error);
+                return default_ocr_result;
+            }
         }
 
         if let Some(results) = request.results() {
@@ -315,7 +424,40 @@ pub fn perform_ocr_apple(
 
 #[cfg(all(target_os = "macos", test))]
 mod tests {
-    use super::utf16_word_ranges;
+    use super::{utf16_word_ranges, AccurateGate, ACCURATE_FAILURES_BEFORE_FAST_ONLY};
+
+    #[test]
+    fn accurate_gate_tries_accurate_until_enough_consecutive_failures() {
+        let gate = AccurateGate::new();
+        for _ in 1..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
+            assert!(gate.should_try());
+            assert!(!gate.record_failure());
+        }
+        assert!(gate.should_try());
+        assert!(
+            gate.record_failure(),
+            "the threshold failure disables accurate"
+        );
+        assert!(!gate.should_try());
+        assert!(
+            !gate.record_failure(),
+            "only the first disabling failure reports it"
+        );
+        assert!(!gate.should_try());
+    }
+
+    #[test]
+    fn accurate_gate_success_resets_the_failure_count() {
+        let gate = AccurateGate::new();
+        for _ in 1..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
+            gate.record_failure();
+        }
+        gate.record_success();
+        for _ in 1..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
+            assert!(!gate.record_failure());
+        }
+        assert!(gate.should_try());
+    }
 
     #[test]
     fn empty_string_yields_empty() {
