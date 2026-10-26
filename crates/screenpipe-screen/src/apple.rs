@@ -14,17 +14,21 @@ use screenpipe_core::Language;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::{ffi::c_void, ptr::null_mut};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 static APPLE_LANGUAGE_MAP: OnceLock<HashMap<Language, &'static str>> = OnceLock::new();
 
 /// Consecutive accurate-recognition failures after which this process uses
-/// the fast recognizer only.
+/// the fast recognizer.
 #[cfg(target_os = "macos")]
 const ACCURATE_FAILURES_BEFORE_FAST_ONLY: u32 = 3;
+
+/// While accurate recognition is disabled, how often one frame tries it again.
+#[cfg(target_os = "macos")]
+const ACCURATE_RETRY_INTERVAL_MS: u64 = 5 * 60 * 1000;
 
 /// Whether to try Vision's accurate recognizer.
 ///
@@ -35,12 +39,18 @@ const ACCURATE_FAILURES_BEFORE_FAST_ONLY: u32 = 3;
 /// (`CRImageReaderError` 1, E5RT code 13) while the fast recognizer keeps
 /// working; a new process recompiles the cache. Each failed frame is retried
 /// with the fast recognizer. A failure counts only when that retry succeeds, so
-/// an image Vision rejects at both levels never disables accurate; after enough
-/// consecutive counted failures the process stops trying accurate.
+/// an image Vision rejects at both levels never disables accurate.
+///
+/// After enough consecutive counted failures, frames use fast recognition and
+/// one frame per interval tries accurate again. Any accurate success resumes
+/// accurate. The failure count is the only state that says whether accurate is
+/// disabled, so a success on another thread cannot be overwritten by a stale
+/// disable.
 #[cfg(target_os = "macos")]
 struct AccurateGate {
     consecutive_failures: AtomicU32,
-    disabled: AtomicBool,
+    /// While disabled, the time (ms on the gate clock) of the next accurate try.
+    retry_at_ms: AtomicU64,
 }
 
 #[cfg(target_os = "macos")]
@@ -48,24 +58,57 @@ impl AccurateGate {
     const fn new() -> Self {
         Self {
             consecutive_failures: AtomicU32::new(0),
-            disabled: AtomicBool::new(false),
+            retry_at_ms: AtomicU64::new(0),
         }
     }
 
-    fn should_try(&self) -> bool {
-        !self.disabled.load(Ordering::Relaxed)
+    fn should_try(&self, now_ms: u64) -> bool {
+        if self.consecutive_failures.load(Ordering::Relaxed) < ACCURATE_FAILURES_BEFORE_FAST_ONLY {
+            return true;
+        }
+        let retry_at_ms = self.retry_at_ms.load(Ordering::Relaxed);
+        now_ms >= retry_at_ms
+            && self
+                .retry_at_ms
+                .compare_exchange(
+                    retry_at_ms,
+                    now_ms + ACCURATE_RETRY_INTERVAL_MS,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
     }
 
-    fn record_success(&self) {
-        self.consecutive_failures.store(0, Ordering::Relaxed);
+    /// Returns true when this success re-enabled accurate recognition.
+    fn record_success(&self) -> bool {
+        self.consecutive_failures.swap(0, Ordering::Relaxed) >= ACCURATE_FAILURES_BEFORE_FAST_ONLY
     }
 
     /// Returns true when this failure is the one that disabled accurate recognition.
-    fn record_failure(&self) -> bool {
-        let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
-        failures >= ACCURATE_FAILURES_BEFORE_FAST_ONLY
-            && !self.disabled.swap(true, Ordering::Relaxed)
+    fn record_failure(&self, now_ms: u64) -> bool {
+        let previous = self
+            .consecutive_failures
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |failures| {
+                Some(failures.saturating_add(1))
+            })
+            .unwrap_or_else(|failures| failures);
+        if previous != ACCURATE_FAILURES_BEFORE_FAST_ONLY - 1 {
+            return false;
+        }
+        self.retry_at_ms
+            .store(now_ms + ACCURATE_RETRY_INTERVAL_MS, Ordering::Relaxed);
+        true
     }
+}
+
+/// Milliseconds since the gate clock started; monotonic.
+#[cfg(target_os = "macos")]
+fn accurate_gate_now_ms() -> u64 {
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
 }
 
 #[cfg(target_os = "macos")]
@@ -264,7 +307,8 @@ pub fn perform_ocr_apple(
                 return default_ocr_result;
             }
         };
-        let try_accurate = ACCURATE_GATE.should_try();
+        let now_ms = accurate_gate_now_ms();
+        let try_accurate = ACCURATE_GATE.should_try(now_ms);
         let level = if try_accurate {
             vn::RequestTextRecognitionLevel::Accurate
         } else {
@@ -274,7 +318,13 @@ pub fn perform_ocr_apple(
         let mut performed = perform_text_request(&handler, &request);
         if try_accurate {
             match &performed {
-                Ok(true) => ACCURATE_GATE.record_success(),
+                Ok(true) => {
+                    if ACCURATE_GATE.record_success() {
+                        info!(
+                            "Apple Vision accurate OCR works again; resuming accurate recognition"
+                        );
+                    }
+                }
                 Ok(false) => {}
                 Err(error) => {
                     warn!(
@@ -286,10 +336,11 @@ pub fn perform_ocr_apple(
                     performed = perform_text_request(&handler, &request);
                     // Fast succeeding where accurate failed means the accurate
                     // model is what broke, not the image.
-                    if matches!(performed, Ok(true)) && ACCURATE_GATE.record_failure() {
+                    if matches!(performed, Ok(true)) && ACCURATE_GATE.record_failure(now_ms) {
                         warn!(
-                            "Apple Vision accurate OCR failed {} frames in a row while fast recognition worked; using fast recognition until restart",
-                            ACCURATE_FAILURES_BEFORE_FAST_ONLY
+                            "Apple Vision accurate OCR failed {} frames in a row while fast recognition worked; using fast recognition and retrying accurate every {} minutes",
+                            ACCURATE_FAILURES_BEFORE_FAST_ONLY,
+                            ACCURATE_RETRY_INTERVAL_MS / 60_000
                         );
                     }
                 }
@@ -424,39 +475,79 @@ pub fn perform_ocr_apple(
 
 #[cfg(all(target_os = "macos", test))]
 mod tests {
-    use super::{utf16_word_ranges, AccurateGate, ACCURATE_FAILURES_BEFORE_FAST_ONLY};
+    use super::{
+        utf16_word_ranges, AccurateGate, ACCURATE_FAILURES_BEFORE_FAST_ONLY,
+        ACCURATE_RETRY_INTERVAL_MS,
+    };
 
     #[test]
     fn accurate_gate_tries_accurate_until_enough_consecutive_failures() {
         let gate = AccurateGate::new();
         for _ in 1..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
-            assert!(gate.should_try());
-            assert!(!gate.record_failure());
+            assert!(gate.should_try(0));
+            assert!(!gate.record_failure(0));
         }
-        assert!(gate.should_try());
+        assert!(gate.should_try(0));
         assert!(
-            gate.record_failure(),
+            gate.record_failure(0),
             "the threshold failure disables accurate"
         );
-        assert!(!gate.should_try());
+        assert!(!gate.should_try(0));
         assert!(
-            !gate.record_failure(),
+            !gate.record_failure(0),
             "only the first disabling failure reports it"
         );
-        assert!(!gate.should_try());
+        assert!(!gate.should_try(0));
     }
 
     #[test]
     fn accurate_gate_success_resets_the_failure_count() {
         let gate = AccurateGate::new();
         for _ in 1..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
-            gate.record_failure();
+            gate.record_failure(0);
         }
-        gate.record_success();
+        assert!(!gate.record_success(), "accurate was never disabled");
         for _ in 1..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
-            assert!(!gate.record_failure());
+            assert!(!gate.record_failure(0));
         }
-        assert!(gate.should_try());
+        assert!(gate.should_try(0));
+    }
+
+    fn disabled_gate_at(now_ms: u64) -> AccurateGate {
+        let gate = AccurateGate::new();
+        for _ in 0..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
+            gate.record_failure(now_ms);
+        }
+        assert!(!gate.should_try(now_ms));
+        gate
+    }
+
+    #[test]
+    fn accurate_gate_success_after_disabling_resumes_accurate() {
+        // Another frame's accurate request can succeed after this frame's
+        // failure reached the threshold; the success must win.
+        let gate = disabled_gate_at(0);
+        assert!(gate.record_success(), "the success re-enables accurate");
+        assert!(gate.should_try(0));
+        assert!(
+            !gate.record_success(),
+            "only the re-enabling success reports it"
+        );
+    }
+
+    #[test]
+    fn accurate_gate_retries_accurate_once_per_interval_while_disabled() {
+        let gate = disabled_gate_at(1_000);
+        let retry_at = 1_000 + ACCURATE_RETRY_INTERVAL_MS;
+        assert!(!gate.should_try(retry_at - 1));
+        assert!(gate.should_try(retry_at), "one frame retries accurate");
+        assert!(!gate.should_try(retry_at), "only one frame per interval");
+        assert!(
+            !gate.record_failure(retry_at),
+            "a failed retry keeps accurate disabled without reporting it again"
+        );
+        assert!(!gate.should_try(retry_at + ACCURATE_RETRY_INTERVAL_MS - 1));
+        assert!(gate.should_try(retry_at + ACCURATE_RETRY_INTERVAL_MS));
     }
 
     #[test]
