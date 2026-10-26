@@ -150,6 +150,48 @@ fn perform_text_request(
     }
 }
 
+/// Runs one frame's OCR request: accurate when `gate` allows it, and fast when
+/// accurate fails. `perform` builds and runs a request at the given level and
+/// reports the result like [`perform_text_request`]. Returns the last request
+/// run and its result.
+#[cfg(target_os = "macos")]
+fn perform_with_fast_fallback<R>(
+    gate: &AccurateGate,
+    now_ms: u64,
+    mut perform: impl FnMut(vn::RequestTextRecognitionLevel) -> (R, Result<bool, String>),
+) -> (R, Result<bool, String>) {
+    if !gate.should_try(now_ms) {
+        return perform(vn::RequestTextRecognitionLevel::Fast);
+    }
+    let accurate = perform(vn::RequestTextRecognitionLevel::Accurate);
+    match &accurate.1 {
+        Ok(true) => {
+            if gate.record_success() {
+                info!("Apple Vision accurate OCR works again; resuming accurate recognition");
+            }
+            return accurate;
+        }
+        Ok(false) => {
+            warn!("Apple Vision OCR request failed without NSError; retrying with fast recognition")
+        }
+        Err(error) => warn!(
+            "Apple Vision OCR request failed: {}; retrying with fast recognition",
+            error
+        ),
+    }
+    let fast = perform(vn::RequestTextRecognitionLevel::Fast);
+    // Fast succeeding where accurate failed means the accurate model is what
+    // broke, not the image.
+    if matches!(fast.1, Ok(true)) && gate.record_failure(now_ms) {
+        warn!(
+            "Apple Vision accurate OCR failed {} frames in a row while fast recognition worked; using fast recognition and retrying accurate every {} minutes",
+            ACCURATE_FAILURES_BEFORE_FAST_ONLY,
+            ACCURATE_RETRY_INTERVAL_MS / 60_000
+        );
+    }
+    fast
+}
+
 pub fn get_apple_languages(languages: &[Language]) -> Vec<String> {
     let map = APPLE_LANGUAGE_MAP.get_or_init(|| {
         let mut m = HashMap::new();
@@ -307,45 +349,12 @@ pub fn perform_ocr_apple(
                 return default_ocr_result;
             }
         };
-        let now_ms = accurate_gate_now_ms();
-        let try_accurate = ACCURATE_GATE.should_try(now_ms);
-        let level = if try_accurate {
-            vn::RequestTextRecognitionLevel::Accurate
-        } else {
-            vn::RequestTextRecognitionLevel::Fast
-        };
-        let mut request = new_text_request(&languages_array, level);
-        let mut performed = perform_text_request(&handler, &request);
-        if try_accurate {
-            match &performed {
-                Ok(true) => {
-                    if ACCURATE_GATE.record_success() {
-                        info!(
-                            "Apple Vision accurate OCR works again; resuming accurate recognition"
-                        );
-                    }
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    warn!(
-                        "Apple Vision OCR request failed: {}; retrying with fast recognition",
-                        error
-                    );
-                    request =
-                        new_text_request(&languages_array, vn::RequestTextRecognitionLevel::Fast);
-                    performed = perform_text_request(&handler, &request);
-                    // Fast succeeding where accurate failed means the accurate
-                    // model is what broke, not the image.
-                    if matches!(performed, Ok(true)) && ACCURATE_GATE.record_failure(now_ms) {
-                        warn!(
-                            "Apple Vision accurate OCR failed {} frames in a row while fast recognition worked; using fast recognition and retrying accurate every {} minutes",
-                            ACCURATE_FAILURES_BEFORE_FAST_ONLY,
-                            ACCURATE_RETRY_INTERVAL_MS / 60_000
-                        );
-                    }
-                }
-            }
-        }
+        let (request, performed) =
+            perform_with_fast_fallback(&ACCURATE_GATE, accurate_gate_now_ms(), |level| {
+                let request = new_text_request(&languages_array, level);
+                let performed = perform_text_request(&handler, &request);
+                (request, performed)
+            });
         match performed {
             Ok(true) => {}
             Ok(false) => {
@@ -476,9 +485,10 @@ pub fn perform_ocr_apple(
 #[cfg(all(target_os = "macos", test))]
 mod tests {
     use super::{
-        utf16_word_ranges, AccurateGate, ACCURATE_FAILURES_BEFORE_FAST_ONLY,
-        ACCURATE_RETRY_INTERVAL_MS,
+        perform_with_fast_fallback, utf16_word_ranges, AccurateGate,
+        ACCURATE_FAILURES_BEFORE_FAST_ONLY, ACCURATE_RETRY_INTERVAL_MS,
     };
+    use cidre::vn::RequestTextRecognitionLevel::{Accurate, Fast};
 
     #[test]
     fn accurate_gate_tries_accurate_until_enough_consecutive_failures() {
@@ -548,6 +558,71 @@ mod tests {
         );
         assert!(!gate.should_try(retry_at + ACCURATE_RETRY_INTERVAL_MS - 1));
         assert!(gate.should_try(retry_at + ACCURATE_RETRY_INTERVAL_MS));
+    }
+
+    /// Runs `perform_with_fast_fallback` with scripted Vision results, one per
+    /// request in order, and returns the levels it requested and its result.
+    fn run_fallback(
+        gate: &AccurateGate,
+        results: &[Result<bool, String>],
+    ) -> (
+        Vec<cidre::vn::RequestTextRecognitionLevel>,
+        Result<bool, String>,
+    ) {
+        let mut levels = Vec::new();
+        let ((), performed) = perform_with_fast_fallback(gate, 0, |level| {
+            levels.push(level);
+            ((), results[levels.len() - 1].clone())
+        });
+        (levels, performed)
+    }
+
+    #[test]
+    fn fallback_accurate_success_runs_no_fast_request() {
+        let gate = AccurateGate::new();
+        assert_eq!(run_fallback(&gate, &[Ok(true)]), (vec![Accurate], Ok(true)));
+    }
+
+    #[test]
+    fn fallback_retries_an_accurate_error_with_fast() {
+        let gate = AccurateGate::new();
+        assert_eq!(
+            run_fallback(&gate, &[Err("e5rt".into()), Ok(true)]),
+            (vec![Accurate, Fast], Ok(true))
+        );
+    }
+
+    #[test]
+    fn fallback_retries_an_accurate_failure_without_nserror_with_fast() {
+        let gate = AccurateGate::new();
+        assert_eq!(
+            run_fallback(&gate, &[Ok(false), Ok(true)]),
+            (vec![Accurate, Fast], Ok(true))
+        );
+    }
+
+    #[test]
+    fn fallback_uses_fast_only_after_accurate_keeps_failing() {
+        let gate = AccurateGate::new();
+        for _ in 0..ACCURATE_FAILURES_BEFORE_FAST_ONLY {
+            assert_eq!(
+                run_fallback(&gate, &[Ok(false), Ok(true)]),
+                (vec![Accurate, Fast], Ok(true))
+            );
+        }
+        assert_eq!(run_fallback(&gate, &[Ok(true)]), (vec![Fast], Ok(true)));
+    }
+
+    #[test]
+    fn fallback_failure_at_both_levels_never_disables_accurate() {
+        let gate = AccurateGate::new();
+        for _ in 0..ACCURATE_FAILURES_BEFORE_FAST_ONLY + 2 {
+            assert_eq!(
+                run_fallback(&gate, &[Err("bad image".into()), Ok(false)]),
+                (vec![Accurate, Fast], Ok(false))
+            );
+        }
+        assert!(gate.should_try(0));
     }
 
     #[test]
