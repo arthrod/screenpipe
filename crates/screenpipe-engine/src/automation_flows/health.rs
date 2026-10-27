@@ -31,8 +31,12 @@ const LEDGER_FILE: &str = "automation-flows-health.json";
 const NOTIFIED_KEPT: chrono::Duration = chrono::Duration::hours(24);
 /// A draft under construction unchanged for this long is abandoned.
 const ABANDONED_AFTER: chrono::Duration = chrono::Duration::hours(24);
-/// Runs read per Flow at each check (n8n lists the newest first).
-const RUNS_PER_CHECK: &str = "100";
+/// Runs read per page of a Flow's history (n8n lists the newest first and
+/// answers at most 250 per page).
+const RUNS_PER_PAGE: &str = "250";
+/// Pages read at most per Flow at each check, however many runs since the
+/// last check.
+const MAX_RUN_PAGES: usize = 20;
 
 /// When the health check runs.
 #[derive(Debug, Clone, Copy)]
@@ -461,20 +465,19 @@ async fn report_failed_runs(
         {
             continue;
         }
-        let page = api
-            .expect_ok(
-                Method::GET,
-                "/executions",
-                &[("workflowId", flow_id), ("limit", RUNS_PER_CHECK)],
-                None,
-            )
-            .await?;
-        for run in page["data"].as_array().into_iter().flatten() {
+        for run in runs_since(
+            api,
+            flow_id,
+            workflow["name"].as_str().unwrap_or_default(),
+            since,
+        )
+        .await?
+        {
             let Some(execution_id) = run["id"].as_str().filter(|id| valid_workflow_id(id)) else {
                 continue;
             };
             let stopped_at = run["stoppedAt"].as_str().or(run["startedAt"].as_str());
-            if !failed(run) || stopped_at.and_then(instant).is_none_or(|at| at < since) {
+            if !failed(&run) || stopped_at.and_then(instant).is_none_or(|at| at < since) {
                 continue;
             }
             if ledger.notified.contains_key(execution_id) {
@@ -525,6 +528,50 @@ async fn report_failed_runs(
     ledger.save(dir);
     state.health.note_pending(&pending);
     Ok(())
+}
+
+/// A Flow's runs since the last check: n8n's pages, newest first, followed
+/// until one ends before `since` (the runs after it are older still), the
+/// cursor runs out, or [MAX_RUN_PAGES] pages were read — the bound hit, a
+/// Flow that ran more than that since the last check, is only warned
+/// about: holding the check back would pin `since` and have every later
+/// check re-read the same newest pages forever, older runs still unseen.
+async fn runs_since(
+    api: &N8nApi,
+    flow_id: &str,
+    flow_name: &str,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<Value>, FlowError> {
+    let mut runs = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_RUN_PAGES {
+        let mut params = vec![("workflowId", flow_id), ("limit", RUNS_PER_PAGE)];
+        if let Some(cursor) = cursor.as_deref() {
+            params.push(("cursor", cursor));
+        }
+        let page = api
+            .expect_ok(Method::GET, "/executions", &params, None)
+            .await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let oldest = data
+            .last()
+            .and_then(|run| run["stoppedAt"].as_str().or(run["startedAt"].as_str()))
+            .and_then(instant);
+        runs.extend(data);
+        if oldest.is_none_or(|at| at < since) {
+            return Ok(runs);
+        }
+        match page["nextCursor"].as_str().filter(|next| !next.is_empty()) {
+            Some(next) if cursor.as_deref() != Some(next) => cursor = Some(next.to_string()),
+            _ => return Ok(runs),
+        }
+    }
+    tracing::warn!(
+        "automation flows: {flow_name} ({flow_id}) still has runs newer than \
+         the last check after {MAX_RUN_PAGES} pages; older failures may go \
+         unnotified"
+    );
+    Ok(runs)
 }
 
 /// A run that ended in an error (n8n's `error`, or `crashed` when n8n
