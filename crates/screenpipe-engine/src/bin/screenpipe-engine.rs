@@ -146,6 +146,14 @@ fn get_base_dir(custom_path: &Option<String>) -> anyhow::Result<PathBuf> {
     Ok(base_dir)
 }
 
+/// Applied last to every layer's filter, so neither `SCREENPIPE_LOG` nor
+/// `RUST_LOG` can turn them back on: ort's lifetime events (`-DROP
+/// Environment`) fire from a static destructor during exit(), when the main
+/// thread's TLS is gone and any layer that takes them panics and aborts.
+fn block_shutdown_lifetime_events(filter: EnvFilter) -> EnvFilter {
+    filter.add_directive("ort::lifetime=warn".parse().unwrap())
+}
+
 fn setup_logging(
     local_data_dir: &PathBuf,
     debug: bool,
@@ -208,11 +216,12 @@ fn setup_logging(
                 }
             });
 
-        if debug {
+        let filter = if debug {
             filter.add_directive("screenpipe=debug".parse().unwrap())
         } else {
             filter
-        }
+        };
+        block_shutdown_lifetime_events(filter)
     };
 
     let timer =
@@ -2541,6 +2550,41 @@ async fn run(cli: Cli, record_arg_sources: RecordArgSources) -> anyhow::Result<(
 mod tests {
     use super::*;
     use reqwest::header::AUTHORIZATION;
+
+    /// Records the target of every event its filter lets through.
+    struct Targets(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<S: tracing::Subscriber> Layer<S> for Targets {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(event.metadata().target().to_string());
+        }
+    }
+
+    #[test]
+    fn ort_lifetime_events_stay_off_whatever_the_user_asks_for() {
+        // `SCREENPIPE_LOG=ort=trace` (or even `ort::lifetime=trace`) must not
+        // let the exit-time `-DROP Environment` event reach a layer.
+        let user = EnvFilter::new("info")
+            .add_directive("ort=trace".parse().unwrap())
+            .add_directive("ort::lifetime=trace".parse().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry()
+            .with(Targets(seen.clone()).with_filter(block_shutdown_lifetime_events(user)));
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::trace!(target: "ort::lifetime", "-DROP Environment");
+            tracing::trace!(target: "ort::session", "other ort tracing still flows");
+        });
+
+        assert_eq!(*seen.lock().unwrap(), ["ort::session"]);
+    }
 
     #[cfg(unix)]
     #[tokio::test]
