@@ -731,11 +731,25 @@ const ENHANCED_MODE_DENIED_BUNDLE_IDS: &[&str] = &[
     "com.microsoft.onenote.mac",
 ];
 
+/// The same apps by lowercased name, only for when the bundle id could not
+/// be resolved: an unresolved lookup must not let the poke through to them.
+const ENHANCED_MODE_DENIED_APP_NAMES: &[&str] = &[
+    "microsoft outlook",
+    "microsoft word",
+    "microsoft excel",
+    "microsoft powerpoint",
+    "microsoft onenote",
+];
+
 /// True when the walker must skip the whole EUI/AMA write block (and its
 /// settle sleep) for the app with this bundle id — see
 /// [`ENHANCED_MODE_DENIED_BUNDLE_IDS`]. Bundle ids are ASCII UTIs compared
-/// case-insensitively against the static strs; no per-walk allocation.
-fn skips_enhanced_mode_for(bundle_id: &str) -> bool {
+/// case-insensitively against the static strs; no per-walk allocation. A
+/// resolved bundle id decides; the lowercased app name is only the fallback.
+fn skips_enhanced_mode_for(bundle_id: &str, app_lower: &str) -> bool {
+    if bundle_id.is_empty() {
+        return ENHANCED_MODE_DENIED_APP_NAMES.contains(&app_lower);
+    }
     ENHANCED_MODE_DENIED_BUNDLE_IDS
         .iter()
         .any(|denied| denied.eq_ignore_ascii_case(bundle_id))
@@ -748,18 +762,28 @@ fn is_busy_enhanced_mode_error(err: &cidre::os::Error) -> bool {
     *err == ax::err::CANNOT_COMPLETE
 }
 
-/// `should_enable_once` records the pid *before* the writes run, so a write
+/// `should_enable_once` records the pid *before* the writes run, so a poke
 /// that failed because the app was momentarily busy would otherwise never be
-/// retried while the pid lives. Forget the pid on exactly that error so a
-/// later walk pokes again; every other failure (attribute unsupported,
-/// illegal argument) stays cached so an app that always refuses is not
-/// re-poked on every walk.
+/// retried while the pid lives. When no write took effect and one failed on
+/// exactly that error, forget the pid so a later walk pokes again; every
+/// other failure (attribute unsupported, illegal argument) stays cached so an
+/// app that always refuses is not re-poked on every walk. When one write took
+/// effect the app is already in enhanced mode, and a later walk would find it
+/// so (`enhanced_ax_mode_already_enabled`) and skip: keep the pid recorded.
 fn retry_enhanced_mode_if_busy(
     cache: &super::enhanced_mode_cache::EnhancedModeCache,
     pid: i32,
-    err: Option<cidre::os::Error>,
+    took_effect: bool,
+    errors: &[Option<cidre::os::Error>],
 ) {
-    if let Some(err) = err.filter(is_busy_enhanced_mode_error) {
+    if took_effect {
+        return;
+    }
+    if let Some(err) = errors
+        .iter()
+        .flatten()
+        .find(|err| is_busy_enhanced_mode_error(err))
+    {
         cache.forget(pid);
         debug!(
             "enhanced AX mode poke for pid={} hit a busy app ({}); will retry on a later walk",
@@ -909,7 +933,10 @@ impl MacosTreeWalker {
         // The set-once gate is evaluated first so the bundle-id lookup runs at
         // most once per pid, not on every walk.
         if ENHANCED_MODE_CACHE.should_enable_once(pid)
-            && !skips_enhanced_mode_for(&enhanced_mode_bundle_id(pid, app_id.as_deref()))
+            && !skips_enhanced_mode_for(
+                &enhanced_mode_bundle_id(pid, app_id.as_deref()),
+                &app_lower,
+            )
         {
             let eui_attr_name = cf::String::from_str("AXEnhancedUserInterface");
             let eui_attr = ax::Attr::with_string(&eui_attr_name);
@@ -937,7 +964,12 @@ impl MacosTreeWalker {
                 // tree, and it avoids reasserting the broader EUI toggle.
                 let ama_res = ax_app.set_attr(ama_attr, cf::Boolean::value_true());
                 ax_mode_changed = ama_res.is_ok();
-                retry_enhanced_mode_if_busy(&ENHANCED_MODE_CACHE, pid, ama_res.err());
+                retry_enhanced_mode_if_busy(
+                    &ENHANCED_MODE_CACHE,
+                    pid,
+                    ax_mode_changed,
+                    &[ama_res.err()],
+                );
                 debug!(
                     "enhanced AX mode manual-only for pid={} app={} because focus is {:?}",
                     pid, app_name, focused_editability
@@ -946,8 +978,12 @@ impl MacosTreeWalker {
                 let eui_res = ax_app.set_attr(eui_attr, cf::Boolean::value_true());
                 let ama_res = ax_app.set_attr(ama_attr, cf::Boolean::value_true());
                 ax_mode_changed = eui_res.is_ok() || ama_res.is_ok();
-                retry_enhanced_mode_if_busy(&ENHANCED_MODE_CACHE, pid, eui_res.err());
-                retry_enhanced_mode_if_busy(&ENHANCED_MODE_CACHE, pid, ama_res.err());
+                retry_enhanced_mode_if_busy(
+                    &ENHANCED_MODE_CACHE,
+                    pid,
+                    ax_mode_changed,
+                    &[eui_res.err(), ama_res.err()],
+                );
                 debug!("enhanced AX mode enabled for pid={} app={}", pid, app_name);
             }
         }
@@ -3466,31 +3502,42 @@ mod tests {
 
     #[test]
     fn test_skips_enhanced_mode_for_native_office_apps() {
-        assert!(skips_enhanced_mode_for("com.microsoft.outlook"));
-        assert!(skips_enhanced_mode_for("com.microsoft.word"));
-        assert!(skips_enhanced_mode_for("com.microsoft.excel"));
-        assert!(skips_enhanced_mode_for("com.microsoft.powerpoint"));
-        assert!(skips_enhanced_mode_for("com.microsoft.onenote.mac"));
+        assert!(skips_enhanced_mode_for("com.microsoft.outlook", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.word", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.excel", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.powerpoint", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.onenote.mac", ""));
         // Bundle ids are UTIs and compare case-insensitively.
-        assert!(skips_enhanced_mode_for("com.microsoft.Outlook"));
-        assert!(skips_enhanced_mode_for("COM.MICROSOFT.WORD"));
+        assert!(skips_enhanced_mode_for("com.microsoft.Outlook", ""));
+        assert!(skips_enhanced_mode_for("COM.MICROSOFT.WORD", ""));
+        // Bundle id unresolved: the Office app is still recognised by name, so
+        // a failed lookup can't let the poke through.
+        assert!(skips_enhanced_mode_for("", "microsoft outlook"));
+        assert!(skips_enhanced_mode_for("", "microsoft word"));
     }
 
     #[test]
     fn test_skips_enhanced_mode_for_allows_electron_and_unknown_apps() {
         // Not a `com.microsoft.*` blanket deny: VS Code / Edge are
         // Electron/Chromium and still need the poke.
-        assert!(!skips_enhanced_mode_for("com.microsoft.VSCode"));
-        assert!(!skips_enhanced_mode_for("com.microsoft.VSCodeInsiders"));
-        assert!(!skips_enhanced_mode_for("com.microsoft.edgemac"));
-        assert!(!skips_enhanced_mode_for("com.microsoft.teams2"));
-        assert!(!skips_enhanced_mode_for("com.google.Chrome"));
-        assert!(!skips_enhanced_mode_for("com.tinyspeck.slackmacgap"));
-        // Unknown or unresolved identity must not deny.
-        assert!(!skips_enhanced_mode_for(""));
-        assert!(!skips_enhanced_mode_for("com.apple.Safari"));
+        assert!(!skips_enhanced_mode_for("com.microsoft.VSCode", ""));
+        assert!(!skips_enhanced_mode_for("com.microsoft.VSCodeInsiders", ""));
+        assert!(!skips_enhanced_mode_for("com.microsoft.edgemac", ""));
+        assert!(!skips_enhanced_mode_for("com.microsoft.teams2", ""));
+        assert!(!skips_enhanced_mode_for("com.google.Chrome", ""));
+        assert!(!skips_enhanced_mode_for("com.tinyspeck.slackmacgap", ""));
+        // Unknown or unresolved identity must not deny other apps.
+        assert!(!skips_enhanced_mode_for("", ""));
+        assert!(!skips_enhanced_mode_for("", "obsidian"));
+        assert!(!skips_enhanced_mode_for("", "visual studio code"));
+        // A resolved bundle id decides; the name is only the fallback.
+        assert!(!skips_enhanced_mode_for(
+            "com.microsoft.VSCode",
+            "microsoft outlook"
+        ));
+        assert!(!skips_enhanced_mode_for("com.apple.Safari", ""));
         // Exact match only — no prefix, no substring.
-        assert!(!skips_enhanced_mode_for("com.microsoft.outlook.helper"));
+        assert!(!skips_enhanced_mode_for("com.microsoft.outlook.helper", ""));
     }
 
     #[test]
@@ -3513,18 +3560,25 @@ mod tests {
         assert!(cache.should_enable_once(7));
         // Busy app (kAXErrorCannotComplete): the poke is forgotten, so a later
         // walk retries instead of the pid staying stuck as "done".
-        retry_enhanced_mode_if_busy(&cache, 7, Some(ax::err::CANNOT_COMPLETE));
+        retry_enhanced_mode_if_busy(&cache, 7, false, &[Some(ax::err::CANNOT_COMPLETE)]);
         assert!(cache.should_enable_once(7));
 
         assert!(cache.should_enable_once(8));
         // Refusal (attribute unsupported): stays cached, never re-poked.
-        retry_enhanced_mode_if_busy(&cache, 8, Some(ax::err::ATTR_UNSUPPORTED));
+        retry_enhanced_mode_if_busy(&cache, 8, false, &[Some(ax::err::ATTR_UNSUPPORTED)]);
         assert!(!cache.should_enable_once(8));
 
         // Success path: nothing to undo.
         assert!(cache.should_enable_once(9));
-        retry_enhanced_mode_if_busy(&cache, 9, None);
+        retry_enhanced_mode_if_busy(&cache, 9, true, &[None]);
         assert!(!cache.should_enable_once(9));
+
+        // Mixed result: EUI took effect, AMA was busy. The app is already in
+        // enhanced mode and a later walk would find it so and skip, so
+        // forgetting the pid would only churn: it stays recorded.
+        assert!(cache.should_enable_once(10));
+        retry_enhanced_mode_if_busy(&cache, 10, true, &[None, Some(ax::err::CANNOT_COMPLETE)]);
+        assert!(!cache.should_enable_once(10));
     }
 
     #[test]
