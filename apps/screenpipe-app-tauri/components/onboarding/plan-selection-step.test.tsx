@@ -16,10 +16,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SELF_HOST_STORAGE_KEY } from "@/lib/self-host";
 import { buildLocalCheckoutReturnUrl } from "@/lib/onboarding-checkout-navigation";
 
 const mocks = vi.hoisted(() => ({
   loadUser: vi.fn(async () => undefined),
+  updateSettings: vi.fn(async () => undefined),
   capture: vi.fn(),
   locale: "en",
   settings: {
@@ -43,6 +45,7 @@ vi.mock("@/lib/hooks/use-settings", () => ({
   useSettings: () => ({
     settings: mocks.settings,
     loadUser: mocks.loadUser,
+    updateSettings: mocks.updateSettings,
   }),
 }));
 vi.mock("@/lib/web-url", () => ({
@@ -58,6 +61,8 @@ let submitSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.locale = "en";
+  // The self-host choice persists in localStorage; keep it per-test.
+  window.localStorage?.removeItem?.(SELF_HOST_STORAGE_KEY);
   window.history.replaceState({}, "", "/onboarding");
   document.querySelectorAll("form").forEach((form) => form.remove());
   mocks.settings.user = {
@@ -77,6 +82,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Self-host build: checkout opens only when the user picks it.
+function chooseCheckout() {
+  fireEvent.click(screen.getByRole("button", { name: "Add payment method" }));
+}
+
 function checkoutForm(): HTMLFormElement {
   const form = document.querySelector<HTMLFormElement>(
     'form[action="https://example.test/onboarding/checkout/start"]',
@@ -88,6 +98,7 @@ function checkoutForm(): HTMLFormElement {
 describe("hosted onboarding checkout", () => {
   it("navigates the existing webview with a hidden POST and keeps secrets out of URLs", async () => {
     render(<PlanSelectionStep handleNextSlide={vi.fn()} />);
+    chooseCheckout();
 
     await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
     const form = checkoutForm();
@@ -110,6 +121,7 @@ describe("hosted onboarding checkout", () => {
 
   it("submits only once when the local controller rerenders", async () => {
     const view = render(<PlanSelectionStep handleNextSlide={vi.fn()} />);
+    chooseCheckout();
     await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
 
     view.rerender(<PlanSelectionStep handleNextSlide={vi.fn()} />);
@@ -120,8 +132,32 @@ describe("hosted onboarding checkout", () => {
     mocks.locale = "ja";
     vi.spyOn(navigator, "language", "get").mockReturnValue("fr-FR");
     render(<PlanSelectionStep handleNextSlide={vi.fn()} />);
+    chooseCheckout();
     await waitFor(() => expect(submitSpy).toHaveBeenCalledOnce());
     expect(checkoutForm().querySelector<HTMLInputElement>('input[name="locale"]')?.value).toBe("ja");
+  });
+
+  it("offers both choices without opening checkout on its own", () => {
+    render(<PlanSelectionStep handleNextSlide={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Add payment method" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Continue without subscription" }),
+    ).toBeEnabled();
+    expect(submitSpy).not.toHaveBeenCalled();
+  });
+
+  it("continues setup without a subscription and records the local choice", async () => {
+    const next = vi.fn();
+    render(<PlanSelectionStep handleNextSlide={next} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Continue without subscription" }),
+    );
+
+    await waitFor(() => expect(next).toHaveBeenCalledOnce());
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ selfHostUnlocked: true });
+    expect(submitSpy).not.toHaveBeenCalled();
   });
 
   it("allows only the app's exact local return origins", () => {

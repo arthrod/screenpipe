@@ -2597,7 +2597,7 @@ impl SettingsStore {
     /// server-verified plan evidence. Missing, conflicting, stale-paid, and
     /// future-dated evidence remains explicitly unknown.
     pub(crate) fn local_plan_policy(&self) -> LocalPlanPolicy {
-        if self.has_verified_paid_plan() {
+        if self.self_host_unlocked() || self.has_verified_paid_plan() {
             LocalPlanPolicy::VerifiedPaid
         } else if self.has_verified_free_plan() {
             LocalPlanPolicy::VerifiedFree
@@ -2622,10 +2622,20 @@ impl SettingsStore {
             .any(|id| !id.trim().is_empty())
     }
 
+    /// Self-host build: the user chose "continue without subscription"
+    /// (`lib/self-host.ts`). Local-only gates open; cloud features still need
+    /// real server entitlement.
+    pub(crate) fn self_host_unlocked(&self) -> bool {
+        self.extra
+            .get("selfHostUnlocked")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+    }
+
     pub fn app_entitled_or_dev(&self) -> bool {
         // Debug builds (`bun tauri dev`, e2e, signed dev builds) are never gated.
         // Release builds must not be bypassable via a runtime env var.
-        if cfg!(debug_assertions) {
+        if cfg!(debug_assertions) || self.self_host_unlocked() {
             return true;
         }
 
@@ -2649,6 +2659,13 @@ impl SettingsStore {
             .unwrap_or(false);
         if !requires_enterprise_app {
             return false;
+        }
+        if self.user.enterprise_account.as_ref()
+            .and_then(|account| account.get("restrict_consumer_build_access"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return true;
         }
 
         let has_consumer_entitlement = self
@@ -3043,7 +3060,8 @@ pub fn init_store(app: &AppHandle) -> Result<SettingsStore, String> {
         }
     }
 
-    if restore_headed_mode_for_consumer(&mut store, cfg!(feature = "enterprise-build")) {
+    let managed_mode = crate::app_mode::for_settings(&store);
+    if restore_headed_mode_for_consumer(&mut store, managed_mode) {
         tracing::info!(
             "settings migration: restored headed UI and scheduled pipe runs for consumer install"
         );
@@ -3051,7 +3069,7 @@ pub fn init_store(app: &AppHandle) -> Result<SettingsStore, String> {
     }
 
     if can_run_settings_migrations
-        && migrate_timeline_visibility_to_sidebar(&mut store, cfg!(feature = "enterprise-build"))
+        && migrate_timeline_visibility_to_sidebar(&mut store, managed_mode)
     {
         should_save = true;
     }
@@ -3066,7 +3084,7 @@ pub fn init_store(app: &AppHandle) -> Result<SettingsStore, String> {
         should_save = true;
     }
 
-    if !cfg!(feature = "enterprise-build")
+    if !managed_mode
         && can_run_settings_migrations
         && migrate_remote_logs_default_enabled(&mut store)
     {
@@ -3847,6 +3865,35 @@ mod tests {
     }
 
     #[test]
+    fn self_host_unlock_opens_local_plan_gates_from_the_frontend_settings_key() {
+        let mut store = SettingsStore::default();
+        assert!(!store.self_host_unlocked());
+        assert_eq!(store.local_plan_policy(), LocalPlanPolicy::Unknown);
+
+        store
+            .extra
+            .insert("selfHostUnlocked".to_string(), json!(true));
+
+        assert!(store.self_host_unlocked());
+        assert_eq!(store.local_plan_policy(), LocalPlanPolicy::VerifiedPaid);
+        assert!(!store.is_free_or_unattributed_user());
+        assert!(store.app_entitled_or_dev());
+        // Survives the round trip through store.bin's catch-all map.
+        let reloaded: SettingsStore =
+            serde_json::from_value(serde_json::to_value(&store).unwrap()).unwrap();
+        assert!(reloaded.self_host_unlocked());
+    }
+
+    #[test]
+    fn self_host_unlock_ignores_non_true_values() {
+        let mut store = SettingsStore::default();
+        store
+            .extra
+            .insert("selfHostUnlocked".to_string(), json!("true"));
+        assert!(!store.self_host_unlocked());
+    }
+
+    #[test]
     fn explicit_app_entitlement_denial_overrides_cached_entitlement_blob() {
         let mut store = SettingsStore::default();
         store.user.token = Some("token".to_string());
@@ -4189,6 +4236,11 @@ mod tests {
             "features": { "app": true }
         }));
         assert!(!store.requires_enterprise_app_for_consumer());
+        store.user.enterprise_account = Some(json!({
+            "requires_enterprise_app": true,
+            "restrict_consumer_build_access": true,
+        }));
+        assert!(store.requires_enterprise_app_for_consumer());
     }
 
     #[test]

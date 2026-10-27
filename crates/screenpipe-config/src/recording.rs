@@ -1103,7 +1103,6 @@ fn default_pii_redaction_columns() -> Vec<String> {
         "accessibility_text",
         "accessibility_tree",
         "window_name",
-        "audio_transcription",
         "ui_text_content",
         "ui_element_value",
         "ui_window_title",
@@ -1301,6 +1300,13 @@ mod tests {
 
         assert_eq!(settings.aec_mode, AecMode::Off);
         assert_eq!(settings.effective_aec_flags(), (false, false, false));
+    }
+
+    #[test]
+    fn native_macos_aec_selection_preserves_native_echo_cancellation() {
+        let settings: RecordingSettings =
+            serde_json::from_str(r#"{"aecMode":"macos","macosInputVpioEnabled":true}"#).unwrap();
+        assert_eq!(settings.effective_aec_flags(), (false, false, true));
     }
 
     #[test]

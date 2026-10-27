@@ -1,5 +1,20 @@
 # Coding-agent regression evals
 
+`app-log-share-redaction-false-positive` mounts the historical shared-log upload
+caller with synthetic chat and native/network ports. Eight outcomes preserve
+numeric telemetry and chat/log context while checking formatted phones, personal
+data, payment cards, API credentials, non-local IP addresses and home usernames.
+The parent fails flattened bounds and complete card removal, preserving six; the reference
+passes eight. Replacement labels and inline redactors remain valid solutions.
+Run `bun test evals/coding-agent/calibrate-log-share-redaction.test.js` with desktop
+Vitest dependencies available. Twelve controls reject unused fixes, disabled or
+partial redaction, omitted chat and corrupted telemetry; missing source remains
+an infrastructure error. `SCREENPIPE_EVAL_DESKTOP_DEPENDENCIES` can select an
+existing dependency directory for calibration. Fixtures and dependencies appear
+only at grading. The current upload path uses native feedback jobs, so these
+historical outcomes do not establish current native redaction, live upload,
+complete privacy coverage, enforced isolation or model performance.
+
 `app-audio-drop-control-dispatch` executes the actual AudioStream destructor
 with synthetic streams and no capture hardware. Three Drop outcomes distinguish
 the broken parent from the reference while two checks preserve live-stream and
@@ -2057,3 +2072,34 @@ including equivalent serialization, unused correct code, lost fields, lost text
 and missing-source classification. The hidden fixture needs no dependency links.
 This does not execute live SDK transport, Pi, billing or model trials, and does
 not establish enforced host isolation.
+
+### Manual pipe instructions
+
+`app-manual-pipe-instruction-preservation` runs the actual pipe manager with a
+synthetic executor across foreground, background and scheduled entrypoints.
+Fifteen outcomes cover authored Unicode instructions, preset context and the
+configured API endpoint, plus time context, run settings, output, working
+directory and empty/no-preset behavior. The parent fails six manual instruction
+outcomes and preserves nine; the historical reference passes fifteen. Run
+`bun test evals/coding-agent/calibrate-pipe-prompt.test.js` for correct, broken,
+equivalent-channel, disconnected, preserved-behavior and setup-error controls.
+Fixtures appear only at grading, with no future build-cache links. This tests
+the executor boundary, not native Pi transport, live providers, permissions,
+durable database effects, enforced host isolation or model performance.
+
+
+## Cloud procedure terminal destinations
+
+`app-cloud-procedure-terminal-routes` covers saving a cloud procedure without
+losing an explicit terminal destination on an ordinary step or either decision
+branch. Eight outcomes also retain surviving IDs through reordering, clear
+missing/deleted destinations, preserve metadata and apply edits without mutating
+inputs. The historical parent fails three terminal-route assertions and preserves
+five outcomes; the known reference passes all eight.
+
+Run `bun test evals/coding-agent/calibrate-cloud-terminal-routes.test.js` for eleven
+controls, including an equivalent implementation, unused fix, invalid-link,
+metadata and input-mutation controls, and a missing-source infrastructure error.
+The grader executes the production edit projection with synthetic documents.
+UI navigation, backend persistence, authorization, native execution, enforced
+agent isolation and model improvement are outside this case's evidence.
