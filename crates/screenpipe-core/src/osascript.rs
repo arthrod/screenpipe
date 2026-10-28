@@ -154,12 +154,16 @@ impl Drop for InFlight<'_> {
 }
 
 fn claim(target: &str) -> Result<InFlight<'_>, OsascriptOutcome> {
-    claim_at(target, Instant::now())
+    claim_at(target, Instant::now)
 }
 
-/// [`claim`] at `now`: the tests drive the clock instead of sleeping.
-fn claim_at(target: &str, now: Instant) -> Result<InFlight<'_>, OsascriptOutcome> {
+/// [`claim`] with the clock passed in: the tests drive it instead of sleeping.
+/// It is read under the lock: read before it, `now` could predate a run
+/// another caller started meanwhile, and `duration_since` would age that run
+/// as zero.
+fn claim_at(target: &str, now: impl FnOnce() -> Instant) -> Result<InFlight<'_>, OsascriptOutcome> {
     let mut targets = lock_targets();
+    let now = now();
     let state = targets.entry(target.to_string()).or_default();
     if state
         .in_flight
@@ -415,15 +419,17 @@ mod tests {
         // check must age the newer one, not the run that already answered.
         let app = "HandoverOsascriptApp";
         let t0 = Instant::now();
-        let first = claim_at(app, t0).ok().unwrap();
-        let second = claim_at(app, t0 + Duration::from_millis(300)).ok().unwrap();
+        let first = claim_at(app, || t0).ok().unwrap();
+        let second = claim_at(app, || t0 + Duration::from_millis(300))
+            .ok()
+            .unwrap();
         drop(first);
         // 600 ms after the first started, 300 ms after the second: healthy.
-        let third = claim_at(app, t0 + Duration::from_millis(600));
+        let third = claim_at(app, || t0 + Duration::from_millis(600));
         assert!(third.is_ok(), "got {:?}", third.err());
         drop(third);
         // The second run itself is stalled once it is `STALLED_AFTER` old.
-        let late = claim_at(app, t0 + Duration::from_millis(300) + STALLED_AFTER);
+        let late = claim_at(app, || t0 + Duration::from_millis(300) + STALLED_AFTER);
         assert!(
             matches!(late, Err(OsascriptOutcome::Busy)),
             "got {:?}",
@@ -431,6 +437,31 @@ mod tests {
         );
         drop(second);
         assert!(lock_targets()[app].in_flight.is_empty());
+    }
+
+    #[test]
+    fn the_clock_is_read_under_the_target_lock() {
+        // Read before the lock, `now` can predate a run another caller
+        // started meanwhile; `duration_since` then ages that run as zero and
+        // a stalled target lets one more caller wait out the deadline. So no
+        // other caller may get in while the clock is being read.
+        let app = "ClockOsascriptApp";
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut other = None;
+        let held = claim_at(app, || {
+            other = Some(thread::spawn(move || {
+                let claimed = claim(app).is_ok();
+                tx.send(claimed).unwrap();
+            }));
+            assert!(
+                rx.recv_timeout(Duration::from_millis(200)).is_err(),
+                "another caller got in while the clock was read"
+            );
+            Instant::now()
+        });
+        assert!(held.is_ok());
+        drop(held);
+        other.unwrap().join().unwrap();
     }
 
     #[test]
