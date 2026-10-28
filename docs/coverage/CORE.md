@@ -8,11 +8,11 @@ confidence, and criticality.
 - Manifest: `docs/coverage/core-engine-map.json`
 - Tracked crates: screenpipe-engine, screenpipe-db, screenpipe-sqlite-coordinator, screenpipe-audio, screenpipe-screen, screenpipe-a11y, screenpipe-fs
 - Mapped suites: 40
-- Mapped Rust files: 410
-- Active test blocks: 4082
+- Mapped Rust files: 411
+- Active test blocks: 4092
 - Ignored/manual test blocks: 188
-- Declared test blocks: 4270
-- Weighted coverage points: 3391.1
+- Declared test blocks: 4280
+- Weighted coverage points: 3401.1
 
 Confidence weights: strong=1.0, partial=0.7, conditional=0.4, smoke=0.3.
 Criticality weights: high=1.0, medium=0.7, low=0.4.
@@ -24,7 +24,7 @@ are explicitly enabled in a runtime lane.
 | Platform | Suites | Active tests | Ignored tests | Weighted points | Layers | Flows | Critical score |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | windows | 36 | 3919 | 170 | 3318.1 | 22 | 14 | 100% |
-| macos | 35 | 3962 | 149 | 3313.4 | 23 | 14 | 100% |
+| macos | 35 | 3972 | 149 | 3323.4 | 23 | 14 | 100% |
 | linux | 32 | 3497 | 145 | 2936.4 | 21 | 14 | 100% |
 
 ## Crate Summary
@@ -35,7 +35,7 @@ are explicitly enabled in a runtime lane.
 | screenpipe-db | 5 | 69 | 29 | 636 | 32 | 606.4 | 9 |
 | screenpipe-sqlite-coordinator | 1 | 0 | 3 | 27 | 0 | 27.0 | 2 |
 | screenpipe-audio | 8 | 29 | 54 | 705 | 56 | 616.0 | 5 |
-| screenpipe-screen | 6 | 9 | 19 | 278 | 9 | 246.4 | 4 |
+| screenpipe-screen | 6 | 10 | 19 | 288 | 9 | 256.4 | 4 |
 | screenpipe-a11y | 4 | 2 | 34 | 401 | 38 | 291.5 | 3 |
 | screenpipe-fs | 1 | 0 | 1 | 3 | 0 | 3.0 | 3 |
 
@@ -72,7 +72,7 @@ bun run coverage:core -- --llvm-cov-summary ../../docs/coverage/core-llvm-cov-su
 | engine-lifecycle | 6 suites / 274 active / 1 ignored / 244.8 pts | 6 suites / 274 active / 1 ignored / 244.8 pts | 6 suites / 270 active / 9 ignored / 243.9 pts |
 | local-api | 6 suites / 650 active / 12 ignored / 506.6 pts | 6 suites / 650 active / 12 ignored / 506.6 pts | 6 suites / 650 active / 12 ignored / 506.6 pts |
 | meeting | 6 suites / 1759 active / 32 ignored / 1438.6 pts | 6 suites / 1759 active / 32 ignored / 1438.6 pts | 4 suites / 1405 active / 28 ignored / 1108.3 pts |
-| ocr | 4 suites / 141 active / 7 ignored / 130.8 pts | 4 suites / 134 active / 7 ignored / 128.6 pts | 3 suites / 125 active / 6 ignored / 119.6 pts |
+| ocr | 4 suites / 141 active / 7 ignored / 130.8 pts | 4 suites / 144 active / 7 ignored / 138.6 pts | 3 suites / 125 active / 6 ignored / 119.6 pts |
 | os-integration | 1 suites / 6 active / 0 ignored / 1.7 pts | 1 suites / 6 active / 0 ignored / 1.7 pts | - |
 | performance | 13 suites / 1707 active / 86 ignored / 1507.4 pts | 14 suites / 1832 active / 94 ignored / 1557.4 pts | 13 suites / 1707 active / 86 ignored / 1507.4 pts |
 | pipes | 1 suites / 551 active / 3 ignored / 385.7 pts | 1 suites / 551 active / 3 ignored / 385.7 pts | 1 suites / 551 active / 3 ignored / 385.7 pts |
@@ -84,7 +84,7 @@ bun run coverage:core -- --llvm-cov-summary ../../docs/coverage/core-llvm-cov-su
 | timeline | 4 suites / 1253 active / 48 ignored / 1029.5 pts | 4 suites / 1253 active / 48 ignored / 1029.5 pts | 4 suites / 1253 active / 48 ignored / 1029.5 pts |
 | transcription | 7 suites / 901 active / 53 ignored / 704.3 pts | 6 suites / 895 active / 53 ignored / 700.1 pts | 6 suites / 895 active / 53 ignored / 700.1 pts |
 | ui-events | 4 suites / 828 active / 34 ignored / 627.7 pts | 3 suites / 759 active / 5 ignored / 579.4 pts | 3 suites / 759 active / 5 ignored / 579.4 pts |
-| vision-capture | 6 suites / 579 active / 32 ignored / 455.3 pts | 6 suites / 572 active / 32 ignored / 453.1 pts | 5 suites / 563 active / 31 ignored / 444.1 pts |
+| vision-capture | 6 suites / 579 active / 32 ignored / 455.3 pts | 6 suites / 582 active / 32 ignored / 463.1 pts | 5 suites / 563 active / 31 ignored / 444.1 pts |
 
 ## Critical Flow Matrix
 
@@ -92,7 +92,7 @@ bun run coverage:core -- --llvm-cov-summary ../../docs/coverage/core-llvm-cov-su
 | --- | --- | --- | --- | --- |
 | Settings to engine recording config | configuration | covered (strong; engine-config-lifecycle, db-accessibility-ui-events) | covered (strong; engine-config-lifecycle, db-accessibility-ui-events) | covered (strong; engine-config-lifecycle, db-accessibility-ui-events) |
 | Engine health, sleep, and lifecycle | engine-lifecycle | covered (strong; engine-config-lifecycle, engine-db-recovery-cli) | covered (strong; engine-config-lifecycle, engine-db-recovery-cli) | covered (strong; engine-config-lifecycle, engine-db-recovery-cli) |
-| Capture, OCR, and frame persistence | vision-capture, ocr | covered (partial; screen-capture-ocr-contract, screen-windows-ocr) | covered (strong; screen-capture-ocr-contract, screen-macos-ocr) | covered (partial; screen-capture-ocr-contract) |
+| Capture, OCR, and frame persistence | vision-capture, ocr | covered (partial; screen-capture-ocr-contract, screen-windows-ocr) | covered (strong; screen-macos-ocr, screen-capture-ocr-contract) | covered (partial; screen-capture-ocr-contract) |
 | Timeline frame and stream delivery | timeline | covered (strong; db-timeline-frames, engine-api-routes) | covered (strong; db-timeline-frames, engine-api-routes) | covered (strong; db-timeline-frames, engine-api-routes) |
 | Local API search and indexing | local-api, db-search | covered (strong; engine-local-api-search-integration) | covered (strong; engine-local-api-search-integration) | covered (strong; engine-local-api-search-integration) |
 | Audio record, transcribe, and reconcile | audio, transcription | covered (strong; audio-meetings-speakers-dedup, audio-transcription-pipeline) | covered (strong; audio-meetings-speakers-dedup, audio-transcription-pipeline) | covered (strong; audio-meetings-speakers-dedup, audio-transcription-pipeline) |
@@ -159,7 +159,7 @@ bun run coverage:core -- --llvm-cov-summary ../../docs/coverage/core-llvm-cov-su
 | screen-capture-ocr-contract | screenpipe-screen | windows, macos, linux | vision-capture, ocr | capture-ocr-pipeline | high | partial | unit | 3 | 18 | 0 | Cross-platform cached-OCR unit coverage for RawCaptureResult to CaptureResult metadata, browser URL, focus state, window-to-screen OCR coordinate transformation, Tesseract output parsing, and contour-based text-region detection for the meeting OCR gate. |
 | screen-capture-windowing | screenpipe-screen | windows, macos, linux | vision-capture, timeline, performance, privacy | capture-ocr-pipeline, timeline-streaming, privacy-and-redaction, performance-liveness | high | strong | mixed | 14 | 193 | 0 | Window filtering, empty-window regressions, retry policy, URL timing, monitor cache, OCR cache, snapshots, and image comparison. |
 | screen-custom-ocr | screenpipe-screen | windows, macos, linux | ocr | capture-ocr-pipeline | medium | conditional | manual | 1 | 0 | 2 | Custom OCR tests are ignored by default and only contribute when explicitly run. |
-| screen-macos-ocr | screenpipe-screen | macos | ocr, vision-capture | capture-ocr-pipeline | high | strong | mixed | 2 | 9 | 1 | Apple Vision OCR source/unit coverage and fixture OCR assertions. |
+| screen-macos-ocr | screenpipe-screen | macos | ocr, vision-capture | capture-ocr-pipeline | high | strong | mixed | 3 | 19 | 1 | Apple Vision OCR source/unit coverage and fixture OCR assertions. |
 | screen-monitor-platform | screenpipe-screen | windows, macos, linux | vision-capture | capture-ocr-pipeline | medium | partial | unit | 5 | 42 | 5 | Per-OS monitor enumeration (Windows, macOS, Wayland/portal on Linux) and the persistent Windows.Graphics.Capture session. Each file is cfg-gated and only executes on its target OS. |
 | screen-windows-ocr | screenpipe-screen | windows | ocr, vision-capture | capture-ocr-pipeline | high | partial | integration | 3 | 16 | 1 | Windows OCR fixture and STA-pool regression tests, portable bounded-worker tests, plus an ignored continuous-capture probe that requires a live desktop. Native OCR tests require an installed English recognizer. |
 | sqlite-coordinator-durable-quarantine | screenpipe-sqlite-coordinator | windows, macos, linux | database, engine-lifecycle | engine-health-lifecycle, performance-liveness | high | strong | unit | 3 | 27 | 0 | Process-wide single-writer gates and manager ownership, SQLite runtime pinning, pending incident markers, fresh integrity verification, confirmed-damage quarantine, file-identity guarded admission, and crash-journal recovery. |
@@ -547,7 +547,7 @@ bun run coverage:core -- --llvm-cov-summary ../../docs/coverage/core-llvm-cov-su
 | engine-workflows | screenpipe-engine | tests/workflow_catalog_contract_test.rs | integration | 2 | 0 | 2 |
 | engine-workflows | screenpipe-engine | tests/workflow_timing_e2e.rs | integration | 2 | 0 | 2 |
 | filesystem-durable-sync | screenpipe-fs | src/lib.rs | source | 3 | 0 | 3 |
-| screen-macos-ocr | screenpipe-screen | src/apple.rs | source | 7 | 1 | 8 |
+| screen-macos-ocr | screenpipe-screen | src/apple.rs | source | 16 | 1 | 17 |
 | screen-capture-windowing | screenpipe-screen | src/browser_utils/mod.rs | source | 13 | 0 | 13 |
 | screen-capture-windowing | screenpipe-screen | src/capture_screenshot_by_window.rs | source | 71 | 0 | 71 |
 | screen-capture-ocr-contract | screenpipe-screen | src/core.rs | source | 1 | 0 | 1 |
@@ -566,6 +566,7 @@ bun run coverage:core -- --llvm-cov-summary ../../docs/coverage/core-llvm-cov-su
 | screen-capture-ocr-contract | screenpipe-screen | src/text_regions.rs | source | 11 | 0 | 11 |
 | screen-capture-windowing | screenpipe-screen | src/utils.rs | source | 5 | 0 | 5 |
 | screen-monitor-platform | screenpipe-screen | src/wgc_capture.rs | source | 8 | 2 | 10 |
+| screen-macos-ocr | screenpipe-screen | tests/apple_vision_model_cache_purge_test.rs | integration | 1 | 0 | 1 |
 | screen-macos-ocr | screenpipe-screen | tests/apple_vision_test.rs | integration | 2 | 0 | 2 |
 | screen-capture-windowing | screenpipe-screen | tests/capture_error_test.rs | integration | 4 | 0 | 4 |
 | screen-capture-windowing | screenpipe-screen | tests/capture_retry_test.rs | integration | 16 | 0 | 16 |

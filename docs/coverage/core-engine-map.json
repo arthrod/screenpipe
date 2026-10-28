@@ -1285,6 +1285,7 @@
       "crate": "screenpipe-screen",
       "files": [
         "src/apple.rs",
+        "tests/apple_vision_model_cache_purge_test.rs",
         "tests/apple_vision_test.rs"
       ],
       "platforms": [
