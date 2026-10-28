@@ -714,6 +714,84 @@ fn looks_like_url(s: &str) -> bool {
 static ENHANCED_MODE_CACHE: std::sync::LazyLock<super::enhanced_mode_cache::EnhancedModeCache> =
     std::sync::LazyLock::new(super::enhanced_mode_cache::EnhancedModeCache::with_default_ttl);
 
+/// Native Microsoft Office apps that must never be poked into enhanced AX
+/// mode. They are Cocoa apps — their AX tree is exposed without the flag —
+/// but they read `AXEnhancedUserInterface` as "a screen reader is active"
+/// and switch to accessibility behavior: legacy Outlook then auto-commits
+/// the first To: autocomplete suggestion (issue #27).
+///
+/// EXACT bundle ids only. Not a `com.microsoft.*` prefix: VS Code
+/// (`com.microsoft.VSCode`) and Edge (`com.microsoft.edgemac`) are
+/// Electron/Chromium and still need the poke.
+const ENHANCED_MODE_DENIED_BUNDLE_IDS: &[&str] = &[
+    "com.microsoft.outlook",
+    "com.microsoft.word",
+    "com.microsoft.excel",
+    "com.microsoft.powerpoint",
+    "com.microsoft.onenote.mac",
+];
+
+/// The same apps by lowercased name, only for when the bundle id could not
+/// be resolved: an unresolved lookup must not let the poke through to them.
+const ENHANCED_MODE_DENIED_APP_NAMES: &[&str] = &[
+    "microsoft outlook",
+    "microsoft word",
+    "microsoft excel",
+    "microsoft powerpoint",
+    "microsoft onenote",
+];
+
+/// True when the walker must skip the whole EUI/AMA write block (and its
+/// settle sleep) for the app with this bundle id — see
+/// [`ENHANCED_MODE_DENIED_BUNDLE_IDS`]. Bundle ids are ASCII UTIs compared
+/// case-insensitively against the static strs; no per-walk allocation. A
+/// resolved bundle id decides; the lowercased app name is only the fallback.
+fn skips_enhanced_mode_for(bundle_id: &str, app_lower: &str) -> bool {
+    if bundle_id.is_empty() {
+        return ENHANCED_MODE_DENIED_APP_NAMES.contains(&app_lower);
+    }
+    ENHANCED_MODE_DENIED_BUNDLE_IDS
+        .iter()
+        .any(|denied| denied.eq_ignore_ascii_case(bundle_id))
+}
+
+/// True when a failed EUI/AMA write means "the app could not answer right
+/// now" (`kAXErrorCannotComplete`, -25204: busy or unresponsive, e.g. at
+/// launch) rather than "this app refuses the attribute".
+fn is_busy_enhanced_mode_error(err: &cidre::os::Error) -> bool {
+    *err == ax::err::CANNOT_COMPLETE
+}
+
+/// `should_enable_once` records the pid *before* the writes run, so a poke
+/// that failed because the app was momentarily busy would otherwise never be
+/// retried while the pid lives. When no write took effect and one failed on
+/// exactly that error, forget the pid so a later walk pokes again; every
+/// other failure (attribute unsupported, illegal argument) stays cached so an
+/// app that always refuses is not re-poked on every walk. When one write took
+/// effect the app is already in enhanced mode, and a later walk would find it
+/// so (`enhanced_ax_mode_already_enabled`) and skip: keep the pid recorded.
+fn retry_enhanced_mode_if_busy(
+    cache: &super::enhanced_mode_cache::EnhancedModeCache,
+    pid: i32,
+    took_effect: bool,
+    errors: &[Option<cidre::os::Error>],
+) {
+    if took_effect {
+        return;
+    }
+    if let Some(err) = errors
+        .iter()
+        .flatten()
+        .find(|err| is_busy_enhanced_mode_error(err))
+    {
+        cache.forget(pid);
+        debug!(
+            "enhanced AX mode poke for pid={} hit a busy app ({}); will retry on a later walk",
+            pid, err
+        );
+    }
+}
+
 /// macOS tree walker using cidre's AX bindings.
 pub struct MacosTreeWalker {
     config: TreeWalkerConfig,
@@ -847,7 +925,19 @@ impl MacosTreeWalker {
         // latches the mode so one poke is plenty; if the renderer ever drops
         // the mode we recover on the next TTL window.
         let mut ax_mode_changed = false;
-        if ENHANCED_MODE_CACHE.should_enable_once(pid) {
+        // Native Microsoft Office apps (exact bundle ids — see
+        // [`ENHANCED_MODE_DENIED_BUNDLE_IDS`]) are Cocoa apps whose AX tree is
+        // exposed without the flag; poking them reads as "a screen reader is
+        // active" (legacy Outlook auto-commits the first To: autocomplete
+        // suggestion, issue #27). Skip the whole block, settle sleep included.
+        // The set-once gate is evaluated first so the bundle-id lookup runs at
+        // most once per pid, not on every walk.
+        if enhanced_mode_gate(
+            &ENHANCED_MODE_CACHE,
+            pid,
+            || enhanced_mode_bundle_id(pid, app_id.as_deref()),
+            &app_lower,
+        ) {
             let eui_attr_name = cf::String::from_str("AXEnhancedUserInterface");
             let eui_attr = ax::Attr::with_string(&eui_attr_name);
 
@@ -861,9 +951,17 @@ impl MacosTreeWalker {
             let ama_attr = ax::Attr::with_string(&ama_attr_name);
 
             let focused_editability = focused_element_editability(&ax_app);
-            if enhanced_ax_mode_already_enabled(&ax_app, eui_attr, ama_attr) {
+            let read_back = enhanced_ax_mode_already_enabled(&ax_app, eui_attr, ama_attr);
+            if read_back == EnhancedModeReadBack::Enabled {
                 debug!(
                     "enhanced AX mode already enabled for pid={} app={}; skipping re-assert",
+                    pid, app_name
+                );
+            } else if read_back == EnhancedModeReadBack::Unknown {
+                // Busy: read again on a later walk rather than poke blind.
+                ENHANCED_MODE_CACHE.forget(pid);
+                debug!(
+                    "enhanced AX mode state unknown for pid={} app={} (busy); will read again",
                     pid, app_name
                 );
             } else if focused_editability != FocusEditability::NotEditable {
@@ -872,15 +970,28 @@ impl MacosTreeWalker {
                 // Keep unsafe/unknown focus paths to Chromium's narrower
                 // AXManualAccessibility flag; Obsidian needs this for its DOM
                 // tree, and it avoids reasserting the broader EUI toggle.
-                ax_mode_changed = ax_app.set_attr(ama_attr, cf::Boolean::value_true()).is_ok();
+                let ama_res = ax_app.set_attr(ama_attr, cf::Boolean::value_true());
+                ax_mode_changed = ama_res.is_ok();
+                retry_enhanced_mode_if_busy(
+                    &ENHANCED_MODE_CACHE,
+                    pid,
+                    ax_mode_changed,
+                    &[ama_res.err()],
+                );
                 debug!(
                     "enhanced AX mode manual-only for pid={} app={} because focus is {:?}",
                     pid, app_name, focused_editability
                 );
             } else {
-                let eui_set = ax_app.set_attr(eui_attr, cf::Boolean::value_true()).is_ok();
-                let ama_set = ax_app.set_attr(ama_attr, cf::Boolean::value_true()).is_ok();
-                ax_mode_changed = eui_set || ama_set;
+                let eui_res = ax_app.set_attr(eui_attr, cf::Boolean::value_true());
+                let ama_res = ax_app.set_attr(ama_attr, cf::Boolean::value_true());
+                ax_mode_changed = eui_res.is_ok() || ama_res.is_ok();
+                retry_enhanced_mode_if_busy(
+                    &ENHANCED_MODE_CACHE,
+                    pid,
+                    ax_mode_changed,
+                    &[eui_res.err(), ama_res.err()],
+                );
                 debug!("enhanced AX mode enabled for pid={} app={}", pid, app_name);
             }
         }
@@ -2565,6 +2676,24 @@ fn localized_app_name_for_pid(pid: i32) -> String {
     localized_app_metadata_for_pid(pid, false).0
 }
 
+/// Bundle id for the enhanced-mode deny check. Reuses the identity the
+/// walker already resolved when `capture_app_identity` is on; otherwise asks
+/// the window server once via `NSRunningApplication` (process metadata, not
+/// an AX message to the target app, so even a busy app answers). Only called
+/// behind the `ENHANCED_MODE_CACHE` set-once gate — at most once per pid,
+/// never per walk.
+fn enhanced_mode_bundle_id(pid: i32, resolved: Option<&str>) -> String {
+    match resolved {
+        Some(id) => id.to_string(),
+        None => cidre::objc::ar_pool(|| {
+            ns::RunningApp::with_pid(pid)
+                .and_then(|app| app.bundle_id())
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        }),
+    }
+}
+
 fn localized_app_metadata_for_pid(
     pid: i32,
     capture_app_identity: bool,
@@ -2692,8 +2821,63 @@ fn enhanced_ax_mode_already_enabled(
     app: &ax::UiElement,
     eui_attr: &ax::Attr,
     ama_attr: &ax::Attr,
+) -> EnhancedModeReadBack {
+    enhanced_mode_read_back(&[read_bool_attr(app, eui_attr), read_bool_attr(app, ama_attr)])
+}
+
+/// A boolean attribute as the app answered it: `Ok(None)` when it holds
+/// something else, the AX error when the read failed.
+fn read_bool_attr(elem: &ax::UiElement, attr: &ax::Attr) -> Result<Option<bool>, cidre::os::Error> {
+    elem.attr_value(attr).map(|v| {
+        (v.get_type_id() == cf::Boolean::type_id()).then(|| {
+            let b: &cf::Boolean = unsafe { std::mem::transmute(&*v) };
+            b.value()
+        })
+    })
+}
+
+/// What reading the enhanced-mode flags back says before a poke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnhancedModeReadBack {
+    /// A flag reads true: the app is in enhanced mode already.
+    Enabled,
+    /// No flag reads true and no read hit a busy app.
+    NotEnabled,
+    /// No flag reads true and a read hit a busy app (`kAXErrorCannotComplete`):
+    /// an earlier poke that timed out may still have taken effect, and poking
+    /// again would make the renderer rebuild its tree a second time.
+    Unknown,
+}
+
+/// A read refused for any other reason (an Electron app has no such
+/// attribute before its first poke) counts as "not enabled", or the poke
+/// would never run.
+fn enhanced_mode_read_back(
+    reads: &[Result<Option<bool>, cidre::os::Error>],
+) -> EnhancedModeReadBack {
+    if reads.iter().any(|read| matches!(read, Ok(Some(true)))) {
+        EnhancedModeReadBack::Enabled
+    } else if reads
+        .iter()
+        .any(|read| matches!(read, Err(err) if is_busy_enhanced_mode_error(err)))
+    {
+        EnhancedModeReadBack::Unknown
+    } else {
+        EnhancedModeReadBack::NotEnabled
+    }
+}
+
+/// The walker's gate for the enhanced-mode poke: the writes and the settle
+/// sleep all sit behind it. The set-once check runs first, so `bundle_id`
+/// (a window-server lookup when capture did not resolve it) runs at most
+/// once per pid.
+fn enhanced_mode_gate(
+    cache: &super::enhanced_mode_cache::EnhancedModeCache,
+    pid: i32,
+    bundle_id: impl FnOnce() -> String,
+    app_lower: &str,
 ) -> bool {
-    get_bool_attr(app, eui_attr).unwrap_or(false) || get_bool_attr(app, ama_attr).unwrap_or(false)
+    cache.should_enable_once(pid) && !skips_enhanced_mode_for(&bundle_id(), app_lower)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3375,6 +3559,164 @@ mod tests {
     fn test_is_vscode_like_allows_space_suffix() {
         // e.g. "code helper (renderer)" — macOS sometimes appends a suffix with a space.
         assert!(is_vscode_like("code helper"));
+    }
+
+    // ── Enhanced AX mode (EUI/AMA) gate unit tests ──────────────────────────
+
+    #[test]
+    fn test_skips_enhanced_mode_for_native_office_apps() {
+        assert!(skips_enhanced_mode_for("com.microsoft.outlook", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.word", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.excel", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.powerpoint", ""));
+        assert!(skips_enhanced_mode_for("com.microsoft.onenote.mac", ""));
+        // Bundle ids are UTIs and compare case-insensitively.
+        assert!(skips_enhanced_mode_for("com.microsoft.Outlook", ""));
+        assert!(skips_enhanced_mode_for("COM.MICROSOFT.WORD", ""));
+        // Bundle id unresolved: the Office app is still recognised by name, so
+        // a failed lookup can't let the poke through.
+        assert!(skips_enhanced_mode_for("", "microsoft outlook"));
+        assert!(skips_enhanced_mode_for("", "microsoft word"));
+    }
+
+    #[test]
+    fn test_skips_enhanced_mode_for_allows_electron_and_unknown_apps() {
+        // Not a `com.microsoft.*` blanket deny: VS Code / Edge are
+        // Electron/Chromium and still need the poke.
+        assert!(!skips_enhanced_mode_for("com.microsoft.VSCode", ""));
+        assert!(!skips_enhanced_mode_for("com.microsoft.VSCodeInsiders", ""));
+        assert!(!skips_enhanced_mode_for("com.microsoft.edgemac", ""));
+        assert!(!skips_enhanced_mode_for("com.microsoft.teams2", ""));
+        assert!(!skips_enhanced_mode_for("com.google.Chrome", ""));
+        assert!(!skips_enhanced_mode_for("com.tinyspeck.slackmacgap", ""));
+        // Unknown or unresolved identity must not deny other apps.
+        assert!(!skips_enhanced_mode_for("", ""));
+        assert!(!skips_enhanced_mode_for("", "obsidian"));
+        assert!(!skips_enhanced_mode_for("", "visual studio code"));
+        // A resolved bundle id decides; the name is only the fallback.
+        assert!(!skips_enhanced_mode_for(
+            "com.microsoft.VSCode",
+            "microsoft outlook"
+        ));
+        assert!(!skips_enhanced_mode_for("com.apple.Safari", ""));
+        // Exact match only — no prefix, no substring.
+        assert!(!skips_enhanced_mode_for("com.microsoft.outlook.helper", ""));
+    }
+
+    #[test]
+    fn test_is_busy_enhanced_mode_error_is_only_cannot_complete() {
+        // kAXErrorCannotComplete (-25204): app busy/unresponsive → retry later.
+        assert!(is_busy_enhanced_mode_error(&ax::err::CANNOT_COMPLETE));
+        assert_eq!(ax::err::CANNOT_COMPLETE.status().0, -25204);
+        // Refusals stay cached so a permanently-refusing app is not re-poked.
+        assert!(!is_busy_enhanced_mode_error(&ax::err::ATTR_UNSUPPORTED));
+        assert!(!is_busy_enhanced_mode_error(&ax::err::ILLEGAL_ARGUMENT));
+        assert!(!is_busy_enhanced_mode_error(&ax::err::FAILURE));
+        assert!(!is_busy_enhanced_mode_error(&ax::err::NOT_IMPLEMENTED));
+    }
+
+    #[test]
+    fn test_retry_enhanced_mode_if_busy_forgets_only_busy_failures() {
+        use super::super::enhanced_mode_cache::EnhancedModeCache;
+
+        let cache = EnhancedModeCache::new(Duration::from_secs(60));
+        assert!(cache.should_enable_once(7));
+        // Busy app (kAXErrorCannotComplete): the poke is forgotten, so a later
+        // walk retries instead of the pid staying stuck as "done".
+        retry_enhanced_mode_if_busy(&cache, 7, false, &[Some(ax::err::CANNOT_COMPLETE)]);
+        assert!(cache.should_enable_once(7));
+
+        assert!(cache.should_enable_once(8));
+        // Refusal (attribute unsupported): stays cached, never re-poked.
+        retry_enhanced_mode_if_busy(&cache, 8, false, &[Some(ax::err::ATTR_UNSUPPORTED)]);
+        assert!(!cache.should_enable_once(8));
+
+        // Success path: nothing to undo.
+        assert!(cache.should_enable_once(9));
+        retry_enhanced_mode_if_busy(&cache, 9, true, &[None]);
+        assert!(!cache.should_enable_once(9));
+
+        // Mixed result: EUI took effect, AMA was busy. The app is already in
+        // enhanced mode and a later walk would find it so and skip, so
+        // forgetting the pid would only churn: it stays recorded.
+        assert!(cache.should_enable_once(10));
+        retry_enhanced_mode_if_busy(&cache, 10, true, &[None, Some(ax::err::CANNOT_COMPLETE)]);
+        assert!(!cache.should_enable_once(10));
+    }
+
+    #[test]
+    fn test_enhanced_mode_read_back_treats_a_busy_read_as_unknown() {
+        use EnhancedModeReadBack::*;
+        let busy = || Err(ax::err::CANNOT_COMPLETE);
+        // A flag that reads true settles it, whatever the other read did.
+        assert_eq!(enhanced_mode_read_back(&[Ok(Some(true)), busy()]), Enabled);
+        // A busy app cannot say whether an earlier poke took: poking again
+        // would rebuild its tree a second time.
+        assert_eq!(enhanced_mode_read_back(&[busy(), Ok(Some(false))]), Unknown);
+        assert_eq!(
+            enhanced_mode_read_back(&[busy(), Err(ax::err::ATTR_UNSUPPORTED)]),
+            Unknown
+        );
+        // An Electron app before its first poke has no such attribute yet:
+        // that is "not enabled", or the poke would never run.
+        assert_eq!(
+            enhanced_mode_read_back(&[Err(ax::err::ATTR_UNSUPPORTED), Ok(None)]),
+            NotEnabled
+        );
+        assert_eq!(
+            enhanced_mode_read_back(&[Ok(Some(false)), Ok(Some(false))]),
+            NotEnabled
+        );
+    }
+
+    #[test]
+    fn test_enhanced_mode_gate_never_opens_for_a_denied_office_app() {
+        use super::super::enhanced_mode_cache::EnhancedModeCache;
+        use std::cell::Cell;
+
+        let cache = EnhancedModeCache::new(Duration::from_secs(60));
+        let lookups = Cell::new(0);
+        let outlook = || {
+            lookups.set(lookups.get() + 1);
+            "com.microsoft.Outlook".to_string()
+        };
+        // Neither write nor settle runs: both sit behind this gate.
+        assert!(!enhanced_mode_gate(
+            &cache,
+            20,
+            outlook,
+            "microsoft outlook"
+        ));
+        // The set-once gate is checked first, so the bundle-id lookup runs at
+        // most once per pid.
+        assert!(!enhanced_mode_gate(
+            &cache,
+            20,
+            outlook,
+            "microsoft outlook"
+        ));
+        assert_eq!(lookups.get(), 1);
+        // An unresolved bundle id falls back to the app name.
+        assert!(!enhanced_mode_gate(
+            &cache,
+            21,
+            String::new,
+            "microsoft word"
+        ));
+        // An Electron app is poked once per pid.
+        let slack = || "com.tinyspeck.slackmacgap".to_string();
+        assert!(enhanced_mode_gate(&cache, 22, slack, "slack"));
+        assert!(!enhanced_mode_gate(&cache, 22, slack, "slack"));
+    }
+
+    #[test]
+    fn test_enhanced_mode_bundle_id_reuses_resolved_identity() {
+        // When capture_app_identity already resolved it, no window-server
+        // lookup may run (pid 0 would find no app and return "").
+        assert_eq!(
+            enhanced_mode_bundle_id(0, Some("com.microsoft.outlook")),
+            "com.microsoft.outlook"
+        );
     }
 
     #[test]
