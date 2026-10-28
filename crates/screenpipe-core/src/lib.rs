@@ -42,6 +42,10 @@ pub mod memories;
 // the GUI-subsystem app flashes a terminal on Windows unless every call site
 // remembers the flag; route them through here instead.
 pub mod no_window;
+// Time-limited osascript runs. An unanswered macOS Automation-consent
+// prompt makes osascript block forever; capture-path callers route through
+// here so a stuck prompt costs one short deadline, not the capture path.
+pub mod osascript;
 pub mod paths;
 pub mod permissions;
 pub mod pipes;

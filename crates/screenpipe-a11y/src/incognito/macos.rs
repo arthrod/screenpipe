@@ -18,10 +18,10 @@
 //! detection via [`super::titles::is_title_private`].
 
 use std::collections::{HashMap, HashSet};
-use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use screenpipe_core::osascript::{self, OsascriptOutcome};
 use tracing::debug;
 
 use super::titles::is_title_private;
@@ -155,9 +155,20 @@ end if"#,
             name = as_name,
         );
 
-        let output = match Command::new("osascript").arg("-e").arg(&script).output() {
-            Ok(o) => o,
-            Err(e) => {
+        let output = match osascript::run(&script, osascript::LOOKUP_TIMEOUT) {
+            OsascriptOutcome::Completed(output) => output,
+            // Timed out / cooled down / busy: no incognito data, same as a
+            // failed script (title fallback stays in charge).
+            skipped @ (OsascriptOutcome::TimedOut
+            | OsascriptOutcome::CoolingDown
+            | OsascriptOutcome::Busy) => {
+                debug!(
+                    "incognito: osascript skipped for {}: {:?}",
+                    as_name, skipped
+                );
+                return None;
+            }
+            OsascriptOutcome::Failed(e) => {
                 debug!("incognito: osascript spawn failed for {}: {}", as_name, e);
                 return None;
             }

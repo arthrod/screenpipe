@@ -582,11 +582,13 @@ fn get_browser_url_ax(app: &cidre::ax::UiElement, app_name: &str) -> Option<Stri
 #[cfg(target_os = "macos")]
 fn get_safari_url_for_drm() -> Option<String> {
     let script = r#"tell application "Safari" to return URL of current tab of front window"#;
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
+    let output =
+        match screenpipe_core::osascript::run(script, screenpipe_core::osascript::LOOKUP_TIMEOUT) {
+            screenpipe_core::osascript::OsascriptOutcome::Completed(output) => output,
+            // Timed out / cooled down / busy, or the spawn failed: no URL, same
+            // as a failed script.
+            _ => return None,
+        };
     if !output.status.success() {
         return None;
     }
@@ -603,11 +605,13 @@ fn get_safari_url_for_drm() -> Option<String> {
 #[cfg(target_os = "macos")]
 fn get_arc_url_for_drm() -> Option<String> {
     let script = r#"tell application "Arc" to return URL of active tab of front window"#;
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
+    let output =
+        match screenpipe_core::osascript::run(script, screenpipe_core::osascript::LOOKUP_TIMEOUT) {
+            screenpipe_core::osascript::OsascriptOutcome::Completed(output) => output,
+            // Timed out / cooled down / busy, or the spawn failed: no URL, same
+            // as a failed script.
+            _ => return None,
+        };
     if !output.status.success() {
         return None;
     }
