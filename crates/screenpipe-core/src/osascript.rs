@@ -131,23 +131,23 @@ fn run_guarded(
 #[derive(Default)]
 struct TargetState {
     cooldown_until: Option<Instant>,
-    /// Runs in flight, and when the oldest of them started.
-    in_flight: u32,
-    in_flight_since: Option<Instant>,
+    /// When each run still in flight started; the oldest one decides
+    /// whether the target looks stalled.
+    in_flight: Vec<Instant>,
 }
 
-/// One run's claim on its target's in-flight count, given back on drop, so
-/// a panic between claim and release cannot leave the app answering `Busy`.
+/// One run's claim on its target, given back on drop, so a panic between
+/// claim and release cannot leave the app answering `Busy`.
 struct InFlight<'a> {
     target: &'a str,
+    started: Instant,
 }
 
 impl Drop for InFlight<'_> {
     fn drop(&mut self) {
         if let Some(state) = lock_targets().get_mut(self.target) {
-            state.in_flight = state.in_flight.saturating_sub(1);
-            if state.in_flight == 0 {
-                state.in_flight_since = None;
+            if let Some(i) = state.in_flight.iter().position(|&at| at == self.started) {
+                state.in_flight.swap_remove(i);
             }
         }
     }
@@ -158,8 +158,10 @@ fn claim(target: &str) -> Result<InFlight<'_>, OsascriptOutcome> {
     let state = targets.entry(target.to_string()).or_default();
     let now = Instant::now();
     if state
-        .in_flight_since
-        .is_some_and(|since| now.duration_since(since) >= STALLED_AFTER)
+        .in_flight
+        .iter()
+        .min()
+        .is_some_and(|&oldest| now.duration_since(oldest) >= STALLED_AFTER)
     {
         tracing::debug!(
             "osascript to {:?} skipped: a run has been in flight for {:?}",
@@ -178,9 +180,11 @@ fn claim(target: &str) -> Result<InFlight<'_>, OsascriptOutcome> {
         }
         state.cooldown_until = None;
     }
-    state.in_flight += 1;
-    state.in_flight_since.get_or_insert(now);
-    Ok(InFlight { target })
+    state.in_flight.push(now);
+    Ok(InFlight {
+        target,
+        started: now,
+    })
 }
 
 static TARGETS: LazyLock<Mutex<HashMap<String, TargetState>>> =
@@ -402,6 +406,36 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_run_does_not_leave_the_app_looking_stalled() {
+        // The oldest run ends while a newer one is still in flight: the stall
+        // check must age the newer one, not the run that already answered.
+        let first = thread::spawn(|| {
+            sh_for(
+                "HandoverOsascriptApp",
+                "sleep 0.6; printf first",
+                LOOKUP_TIMEOUT,
+            )
+        });
+        thread::sleep(Duration::from_millis(300));
+        let second = thread::spawn(|| {
+            sh_for(
+                "HandoverOsascriptApp",
+                "sleep 1; printf second",
+                LOOKUP_TIMEOUT,
+            )
+        });
+        assert_eq!(completed(first.join().unwrap()).stdout, b"first");
+        // The second run has been in flight ~300 ms, under `STALLED_AFTER`.
+        let output = completed(sh_for(
+            "HandoverOsascriptApp",
+            "printf third",
+            LOOKUP_TIMEOUT,
+        ));
+        assert_eq!(output.stdout, b"third");
+        assert_eq!(completed(second.join().unwrap()).stdout, b"second");
+    }
+
+    #[test]
     fn the_in_flight_claim_is_given_back_when_the_run_unwinds() {
         // A panic between claim and release must not leave the app answering
         // `Busy` for the rest of the session.
@@ -412,8 +446,7 @@ mod tests {
         assert!(unwound.is_err());
         let targets = lock_targets();
         let state = &targets["UnwindOsascriptApp"];
-        assert_eq!(state.in_flight, 0);
-        assert!(state.in_flight_since.is_none());
+        assert!(state.in_flight.is_empty());
     }
 
     #[test]
