@@ -851,6 +851,12 @@ pub(crate) fn should_release_on_pause_entry(was_paused: bool, is_paused: bool) -
     is_paused && !was_paused
 }
 
+/// True iff a power-profile change that turned screenshots off should release
+/// the OS-level capture stream: edge-triggered, like the pause-entry release.
+fn should_release_on_screenshots_off(was_disabled: bool, is_disabled: bool) -> bool {
+    is_disabled && !was_disabled
+}
+
 fn should_suspend_on_focus_away(was_active: bool, is_active: bool) -> bool {
     was_active && !is_active
 }
@@ -1630,6 +1636,7 @@ pub(crate) async fn event_driven_capture_loop(
                 snapshot_writer.set_quality(effective_q);
                 visual_check_interval = Duration::from_millis(profile.visual_check_interval_ms);
                 visual_change_threshold = profile.visual_change_threshold;
+                let screenshots_were_disabled = screenshot_disabled;
                 screenshot_disabled = screenshots_disabled_by_config || profile.screenshot_disabled;
                 record_screenshot_capture_state(
                     &vision_metrics,
@@ -1651,6 +1658,12 @@ pub(crate) async fn event_driven_capture_loop(
                         "screenshots disabled for monitor {} (power profile {:?}, managed/config={}) — a11y walk continues",
                         monitor_id, profile.name, screenshots_disabled_by_config
                     );
+                }
+                // A focused monitor never reaches the Cold-edge release, so
+                // release the stream here; it reopens on the next screenshot.
+                if should_release_on_screenshots_off(screenshots_were_disabled, screenshot_disabled)
+                {
+                    monitor.release_capture_stream();
                 }
             }
         }
@@ -5915,6 +5928,29 @@ mod tests {
         assert!(
             !should_release_on_pause_entry(false, false),
             "active steady-state: must NOT release"
+        );
+    }
+
+    #[test]
+    fn should_release_only_when_screenshots_turn_off() {
+        // A power profile can switch screenshots off on a monitor that keeps
+        // the focus, so the Cold-edge release never fires: without this, the
+        // persistent stream keeps producing frames nobody reads.
+        assert!(
+            should_release_on_screenshots_off(false, true),
+            "screenshots on → off: must release the OS handle"
+        );
+        assert!(
+            !should_release_on_screenshots_off(true, true),
+            "already off: must NOT re-release (would churn handles)"
+        );
+        assert!(
+            !should_release_on_screenshots_off(true, false),
+            "off → on: must NOT release (capture is about to need it)"
+        );
+        assert!(
+            !should_release_on_screenshots_off(false, false),
+            "screenshots on: must NOT release"
         );
     }
 
