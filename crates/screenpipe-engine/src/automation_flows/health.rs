@@ -31,8 +31,12 @@ const LEDGER_FILE: &str = "automation-flows-health.json";
 const NOTIFIED_KEPT: chrono::Duration = chrono::Duration::hours(24);
 /// A draft under construction unchanged for this long is abandoned.
 const ABANDONED_AFTER: chrono::Duration = chrono::Duration::hours(24);
-/// Runs read per Flow at each check (n8n lists the newest first).
-const RUNS_PER_CHECK: &str = "100";
+/// Runs read per page of a Flow's history (n8n lists the newest first and
+/// answers at most 250 per page).
+const RUNS_PER_PAGE: &str = "250";
+/// Pages read at most per Flow at each check, however many runs since the
+/// last check.
+const MAX_RUN_PAGES: usize = 20;
 
 /// When the health check runs.
 #[derive(Debug, Clone, Copy)]
@@ -210,6 +214,13 @@ struct Ledger {
     /// Runs notified since then: execution id → when it stopped.
     #[serde(default)]
     notified: BTreeMap<String, String>,
+    /// Runs read again at the next check, by id: still going at a check, or
+    /// ended in a failure not handed over yet (execution id → Flow id). n8n
+    /// lists runs newest first by when they started, so one that ends after
+    /// a page of newer runs that all ended before the last check sits below
+    /// where the check stops reading.
+    #[serde(default)]
+    open: BTreeMap<String, String>,
 }
 
 impl Ledger {
@@ -461,15 +472,16 @@ async fn report_failed_runs(
         {
             continue;
         }
-        let page = api
-            .expect_ok(
-                Method::GET,
-                "/executions",
-                &[("workflowId", flow_id), ("limit", RUNS_PER_CHECK)],
-                None,
-            )
-            .await?;
-        for run in page["data"].as_array().into_iter().flatten() {
+        let mut runs = runs_since(
+            api,
+            flow_id,
+            workflow["name"].as_str().unwrap_or_default(),
+            since,
+        )
+        .await?;
+        let unseen = open_runs_unseen(api, &mut ledger, flow_id, &runs).await?;
+        runs.extend(unseen);
+        for run in &runs {
             let Some(execution_id) = run["id"].as_str().filter(|id| valid_workflow_id(id)) else {
                 continue;
             };
@@ -516,7 +528,12 @@ async fn report_failed_runs(
                 }
             }
         }
+        keep_open(&mut ledger, flow_id, &runs, &report.pending);
     }
+    // A Flow n8n no longer has has no run left to read again.
+    ledger
+        .open
+        .retain(|_, flow| workflows.iter().any(|w| w["id"] == flow.as_str()));
     // A run not handed over is looked at again next time.
     if report.pending.is_empty() {
         ledger.last_check_at = Some(now.to_rfc3339());
@@ -525,6 +542,115 @@ async fn report_failed_runs(
     ledger.save(dir);
     state.health.note_pending(&pending);
     Ok(())
+}
+
+/// A Flow's runs since the last check: n8n's pages, newest first, followed
+/// until one ends before `since` (the runs after it started earlier still;
+/// one of them going on past the last check is read by id, see
+/// [`Ledger::open`]), the
+/// cursor runs out, or [MAX_RUN_PAGES] pages were read — the bound hit, a
+/// Flow that ran more than that since the last check, is only warned
+/// about: holding the check back would pin `since` and have every later
+/// check re-read the same newest pages forever, older runs still unseen.
+async fn runs_since(
+    api: &N8nApi,
+    flow_id: &str,
+    flow_name: &str,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<Value>, FlowError> {
+    let mut runs = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..MAX_RUN_PAGES {
+        let mut params = vec![("workflowId", flow_id), ("limit", RUNS_PER_PAGE)];
+        if let Some(cursor) = cursor.as_deref() {
+            params.push(("cursor", cursor));
+        }
+        let page = api
+            .expect_ok(Method::GET, "/executions", &params, None)
+            .await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let oldest = data
+            .last()
+            .and_then(|run| run["stoppedAt"].as_str().or(run["startedAt"].as_str()))
+            .and_then(instant);
+        runs.extend(data);
+        if oldest.is_none_or(|at| at < since) {
+            return Ok(runs);
+        }
+        match page["nextCursor"].as_str().filter(|next| !next.is_empty()) {
+            Some(next) if cursor.as_deref() == Some(next) => {
+                tracing::warn!(
+                    "automation flows: n8n answered {flow_name} ({flow_id})'s \
+                     runs with the same page cursor again; older failures may \
+                     go unnotified"
+                );
+                return Ok(runs);
+            }
+            Some(next) => cursor = Some(next.to_string()),
+            None => return Ok(runs),
+        }
+    }
+    tracing::warn!(
+        "automation flows: {flow_name} ({flow_id}) still has runs newer than \
+         the last check after {MAX_RUN_PAGES} pages; older failures may go \
+         unnotified"
+    );
+    Ok(runs)
+}
+
+/// The runs of `flow_id` kept in [`Ledger::open`] that this check's pages
+/// did not reach, as n8n has them now; one n8n no longer has is forgotten.
+async fn open_runs_unseen(
+    api: &N8nApi,
+    ledger: &mut Ledger,
+    flow_id: &str,
+    seen: &[Value],
+) -> Result<Vec<Value>, FlowError> {
+    let unseen: Vec<String> = ledger
+        .open
+        .iter()
+        .filter(|(id, flow)| {
+            flow.as_str() == flow_id && !seen.iter().any(|run| run["id"] == id.as_str())
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut runs = Vec::new();
+    for id in unseen {
+        match api
+            .send(Method::GET, &format!("/executions/{id}"), &[], None)
+            .await?
+        {
+            (status, run) if (200..300).contains(&status) => runs.push(run),
+            (404, _) => {
+                ledger.open.remove(&id);
+            }
+            (status, body) => return Err(upstream_error(status, &body)),
+        }
+    }
+    Ok(runs)
+}
+
+/// Keeps in [`Ledger::open`] the runs of `flow_id` to read again next time:
+/// those still going, and the failures not handed over yet.
+fn keep_open(ledger: &mut Ledger, flow_id: &str, runs: &[Value], pending: &[String]) {
+    for run in runs {
+        let Some(id) = run["id"].as_str().filter(|id| valid_workflow_id(id)) else {
+            continue;
+        };
+        if still_going(run) || pending.iter().any(|p| p == id) {
+            ledger.open.insert(id.to_string(), flow_id.to_string());
+        } else {
+            ledger.open.remove(id);
+        }
+    }
+}
+
+/// A run n8n has not finished: queued, running, or paused in a Wait node.
+fn still_going(run: &Value) -> bool {
+    match run["status"].as_str() {
+        Some(status) => matches!(status, "new" | "running" | "waiting"),
+        None => run["stoppedAt"].is_null(),
+    }
 }
 
 /// A run that ended in an error (n8n's `error`, or `crashed` when n8n
