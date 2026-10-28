@@ -214,6 +214,13 @@ struct Ledger {
     /// Runs notified since then: execution id → when it stopped.
     #[serde(default)]
     notified: BTreeMap<String, String>,
+    /// Runs read again at the next check, by id: still going at a check, or
+    /// ended in a failure not handed over yet (execution id → Flow id). n8n
+    /// lists runs newest first by when they started, so one that ends after
+    /// a page of newer runs that all ended before the last check sits below
+    /// where the check stops reading.
+    #[serde(default)]
+    open: BTreeMap<String, String>,
 }
 
 impl Ledger {
@@ -465,19 +472,21 @@ async fn report_failed_runs(
         {
             continue;
         }
-        for run in runs_since(
+        let mut runs = runs_since(
             api,
             flow_id,
             workflow["name"].as_str().unwrap_or_default(),
             since,
         )
-        .await?
-        {
+        .await?;
+        let unseen = open_runs_unseen(api, &mut ledger, flow_id, &runs).await?;
+        runs.extend(unseen);
+        for run in &runs {
             let Some(execution_id) = run["id"].as_str().filter(|id| valid_workflow_id(id)) else {
                 continue;
             };
             let stopped_at = run["stoppedAt"].as_str().or(run["startedAt"].as_str());
-            if !failed(&run) || stopped_at.and_then(instant).is_none_or(|at| at < since) {
+            if !failed(run) || stopped_at.and_then(instant).is_none_or(|at| at < since) {
                 continue;
             }
             if ledger.notified.contains_key(execution_id) {
@@ -519,7 +528,12 @@ async fn report_failed_runs(
                 }
             }
         }
+        keep_open(&mut ledger, flow_id, &runs, &report.pending);
     }
+    // A Flow n8n no longer has has no run left to read again.
+    ledger
+        .open
+        .retain(|_, flow| workflows.iter().any(|w| w["id"] == flow.as_str()));
     // A run not handed over is looked at again next time.
     if report.pending.is_empty() {
         ledger.last_check_at = Some(now.to_rfc3339());
@@ -531,7 +545,9 @@ async fn report_failed_runs(
 }
 
 /// A Flow's runs since the last check: n8n's pages, newest first, followed
-/// until one ends before `since` (the runs after it are older still), the
+/// until one ends before `since` (the runs after it started earlier still;
+/// one of them going on past the last check is read by id, see
+/// [`Ledger::open`]), the
 /// cursor runs out, or [MAX_RUN_PAGES] pages were read — the bound hit, a
 /// Flow that ran more than that since the last check, is only warned
 /// about: holding the check back would pin `since` and have every later
@@ -562,8 +578,16 @@ async fn runs_since(
             return Ok(runs);
         }
         match page["nextCursor"].as_str().filter(|next| !next.is_empty()) {
-            Some(next) if cursor.as_deref() != Some(next) => cursor = Some(next.to_string()),
-            _ => return Ok(runs),
+            Some(next) if cursor.as_deref() == Some(next) => {
+                tracing::warn!(
+                    "automation flows: n8n answered {flow_name} ({flow_id})'s \
+                     runs with the same page cursor again; older failures may \
+                     go unnotified"
+                );
+                return Ok(runs);
+            }
+            Some(next) => cursor = Some(next.to_string()),
+            None => return Ok(runs),
         }
     }
     tracing::warn!(
@@ -572,6 +596,61 @@ async fn runs_since(
          unnotified"
     );
     Ok(runs)
+}
+
+/// The runs of `flow_id` kept in [`Ledger::open`] that this check's pages
+/// did not reach, as n8n has them now; one n8n no longer has is forgotten.
+async fn open_runs_unseen(
+    api: &N8nApi,
+    ledger: &mut Ledger,
+    flow_id: &str,
+    seen: &[Value],
+) -> Result<Vec<Value>, FlowError> {
+    let unseen: Vec<String> = ledger
+        .open
+        .iter()
+        .filter(|(id, flow)| {
+            flow.as_str() == flow_id && !seen.iter().any(|run| run["id"] == id.as_str())
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let mut runs = Vec::new();
+    for id in unseen {
+        match api
+            .send(Method::GET, &format!("/executions/{id}"), &[], None)
+            .await?
+        {
+            (status, run) if (200..300).contains(&status) => runs.push(run),
+            (404, _) => {
+                ledger.open.remove(&id);
+            }
+            (status, body) => return Err(upstream_error(status, &body)),
+        }
+    }
+    Ok(runs)
+}
+
+/// Keeps in [`Ledger::open`] the runs of `flow_id` to read again next time:
+/// those still going, and the failures not handed over yet.
+fn keep_open(ledger: &mut Ledger, flow_id: &str, runs: &[Value], pending: &[String]) {
+    for run in runs {
+        let Some(id) = run["id"].as_str().filter(|id| valid_workflow_id(id)) else {
+            continue;
+        };
+        if still_going(run) || pending.iter().any(|p| p == id) {
+            ledger.open.insert(id.to_string(), flow_id.to_string());
+        } else {
+            ledger.open.remove(id);
+        }
+    }
+}
+
+/// A run n8n has not finished: queued, running, or paused in a Wait node.
+fn still_going(run: &Value) -> bool {
+    match run["status"].as_str() {
+        Some(status) => matches!(status, "new" | "running" | "waiting"),
+        None => run["stoppedAt"].is_null(),
+    }
 }
 
 /// A run that ended in an error (n8n's `error`, or `crashed` when n8n

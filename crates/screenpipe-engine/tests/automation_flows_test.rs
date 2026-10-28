@@ -5265,6 +5265,93 @@ async fn the_check_stops_at_the_first_page_of_runs_older_than_the_last_check() {
     assert_eq!(run_list_reads(&server).await, reads + 1);
 }
 
+/// A Flow with `newer` runs that went through, listed before (newer than)
+/// `exec-long`, a run started an hour ago and still going.
+fn runs_newer_than_a_long_run(n8n: &FakeN8n, id: &str, newer: usize) {
+    for i in 1..=newer {
+        let mut fine = failed_run_ago(&format!("exec-fine{i}"), id, chrono::Duration::zero());
+        fine["status"] = json!("success");
+        n8n.add_execution(fine);
+    }
+    let mut long = failed_run_ago("exec-long", id, chrono::Duration::zero());
+    long["status"] = json!("running");
+    long["startedAt"] = json!((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
+    long["stoppedAt"] = Value::Null;
+    n8n.add_execution(long);
+}
+
+/// `exec-long` ends in an error now.
+fn the_long_run_fails(n8n: &FakeN8n) {
+    let mut state = n8n.0.lock().unwrap();
+    let long = state
+        .executions
+        .iter_mut()
+        .find(|e| e["id"] == "exec-long")
+        .unwrap();
+    long["status"] = json!("error");
+    long["stoppedAt"] = json!(chrono::Utc::now().to_rfc3339());
+}
+
+#[tokio::test]
+async fn a_run_still_going_at_the_last_check_is_notified_when_it_fails_later() {
+    // n8n lists runs newest first by when they started: one still going at
+    // the last check can end in an error after a page of newer runs that all
+    // ended before that check, below where the check stops reading.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    n8n.0.lock().unwrap().executions_page_size = Some(50);
+    runs_newer_than_a_long_run(&n8n, &id, 60);
+    assert_eq!(health_check(&app).await["notified"], json!([]));
+
+    the_long_run_fails(&n8n);
+    let report = health_check(&app).await;
+
+    assert_eq!(report["notified"], json!(["exec-long"]), "{report}");
+    assert_eq!(
+        notice_ids(&notifications(&app).await),
+        [format!("automation-flow-failure:{id}:exec-long")]
+    );
+    // The next check finds nothing new: never twice.
+    assert_eq!(health_check(&app).await["notified"], json!([]));
+    assert_eq!(notifications(&app).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_long_run_the_notification_server_missed_is_notified_at_the_next_check() {
+    // The run that ended is kept in view until it is handed over, not only
+    // while it is still going.
+    let (server, n8n) = start_fake_n8n().await;
+    let app = App::new().await;
+    app.configure_n8n(&server.uri());
+    let id = active_flow(&app).await;
+    n8n.0.lock().unwrap().executions_page_size = Some(50);
+    runs_newer_than_a_long_run(&n8n, &id, 60);
+    assert_eq!(health_check(&app).await["notified"], json!([]));
+
+    the_long_run_fails(&n8n);
+    app.notify.reset().await;
+    let report = health_check(&app).await;
+    assert_eq!(
+        report["pendingNotifications"],
+        json!(["exec-long"]),
+        "{report}"
+    );
+
+    app.notify.reset().await;
+    Mock::given(any())
+        .respond_with(json_response(
+            200,
+            json!({"message": "Notification sent successfully"}),
+        ))
+        .mount(&app.notify)
+        .await;
+    assert_eq!(health_check(&app).await["notified"], json!(["exec-long"]));
+    assert_eq!(health_check(&app).await["notified"], json!([]));
+    assert_eq!(notifications(&app).await.len(), 1);
+}
+
 #[tokio::test]
 async fn the_very_first_check_does_not_notify_runs_from_before_the_engine_started() {
     // A first install (no record of past checks) must not turn the last day
