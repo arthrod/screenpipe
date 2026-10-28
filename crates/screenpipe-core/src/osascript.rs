@@ -154,9 +154,13 @@ impl Drop for InFlight<'_> {
 }
 
 fn claim(target: &str) -> Result<InFlight<'_>, OsascriptOutcome> {
+    claim_at(target, Instant::now())
+}
+
+/// [`claim`] at `now`: the tests drive the clock instead of sleeping.
+fn claim_at(target: &str, now: Instant) -> Result<InFlight<'_>, OsascriptOutcome> {
     let mut targets = lock_targets();
     let state = targets.entry(target.to_string()).or_default();
-    let now = Instant::now();
     if state
         .in_flight
         .iter()
@@ -409,30 +413,24 @@ mod tests {
     fn a_finished_run_does_not_leave_the_app_looking_stalled() {
         // The oldest run ends while a newer one is still in flight: the stall
         // check must age the newer one, not the run that already answered.
-        let first = thread::spawn(|| {
-            sh_for(
-                "HandoverOsascriptApp",
-                "sleep 0.6; printf first",
-                LOOKUP_TIMEOUT,
-            )
-        });
-        thread::sleep(Duration::from_millis(300));
-        let second = thread::spawn(|| {
-            sh_for(
-                "HandoverOsascriptApp",
-                "sleep 1; printf second",
-                LOOKUP_TIMEOUT,
-            )
-        });
-        assert_eq!(completed(first.join().unwrap()).stdout, b"first");
-        // The second run has been in flight ~300 ms, under `STALLED_AFTER`.
-        let output = completed(sh_for(
-            "HandoverOsascriptApp",
-            "printf third",
-            LOOKUP_TIMEOUT,
-        ));
-        assert_eq!(output.stdout, b"third");
-        assert_eq!(completed(second.join().unwrap()).stdout, b"second");
+        let app = "HandoverOsascriptApp";
+        let t0 = Instant::now();
+        let first = claim_at(app, t0).ok().unwrap();
+        let second = claim_at(app, t0 + Duration::from_millis(300)).ok().unwrap();
+        drop(first);
+        // 600 ms after the first started, 300 ms after the second: healthy.
+        let third = claim_at(app, t0 + Duration::from_millis(600));
+        assert!(third.is_ok(), "got {:?}", third.err());
+        drop(third);
+        // The second run itself is stalled once it is `STALLED_AFTER` old.
+        let late = claim_at(app, t0 + Duration::from_millis(300) + STALLED_AFTER);
+        assert!(
+            matches!(late, Err(OsascriptOutcome::Busy)),
+            "got {:?}",
+            late.err()
+        );
+        drop(second);
+        assert!(lock_targets()[app].in_flight.is_empty());
     }
 
     #[test]
