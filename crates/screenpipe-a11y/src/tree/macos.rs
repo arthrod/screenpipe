@@ -932,12 +932,12 @@ impl MacosTreeWalker {
         // suggestion, issue #27). Skip the whole block, settle sleep included.
         // The set-once gate is evaluated first so the bundle-id lookup runs at
         // most once per pid, not on every walk.
-        if ENHANCED_MODE_CACHE.should_enable_once(pid)
-            && !skips_enhanced_mode_for(
-                &enhanced_mode_bundle_id(pid, app_id.as_deref()),
-                &app_lower,
-            )
-        {
+        if enhanced_mode_gate(
+            &ENHANCED_MODE_CACHE,
+            pid,
+            || enhanced_mode_bundle_id(pid, app_id.as_deref()),
+            &app_lower,
+        ) {
             let eui_attr_name = cf::String::from_str("AXEnhancedUserInterface");
             let eui_attr = ax::Attr::with_string(&eui_attr_name);
 
@@ -951,9 +951,17 @@ impl MacosTreeWalker {
             let ama_attr = ax::Attr::with_string(&ama_attr_name);
 
             let focused_editability = focused_element_editability(&ax_app);
-            if enhanced_ax_mode_already_enabled(&ax_app, eui_attr, ama_attr) {
+            let read_back = enhanced_ax_mode_already_enabled(&ax_app, eui_attr, ama_attr);
+            if read_back == EnhancedModeReadBack::Enabled {
                 debug!(
                     "enhanced AX mode already enabled for pid={} app={}; skipping re-assert",
+                    pid, app_name
+                );
+            } else if read_back == EnhancedModeReadBack::Unknown {
+                // Busy: read again on a later walk rather than poke blind.
+                ENHANCED_MODE_CACHE.forget(pid);
+                debug!(
+                    "enhanced AX mode state unknown for pid={} app={} (busy); will read again",
                     pid, app_name
                 );
             } else if focused_editability != FocusEditability::NotEditable {
@@ -2813,8 +2821,63 @@ fn enhanced_ax_mode_already_enabled(
     app: &ax::UiElement,
     eui_attr: &ax::Attr,
     ama_attr: &ax::Attr,
+) -> EnhancedModeReadBack {
+    enhanced_mode_read_back(&[read_bool_attr(app, eui_attr), read_bool_attr(app, ama_attr)])
+}
+
+/// A boolean attribute as the app answered it: `Ok(None)` when it holds
+/// something else, the AX error when the read failed.
+fn read_bool_attr(elem: &ax::UiElement, attr: &ax::Attr) -> Result<Option<bool>, cidre::os::Error> {
+    elem.attr_value(attr).map(|v| {
+        (v.get_type_id() == cf::Boolean::type_id()).then(|| {
+            let b: &cf::Boolean = unsafe { std::mem::transmute(&*v) };
+            b.value()
+        })
+    })
+}
+
+/// What reading the enhanced-mode flags back says before a poke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EnhancedModeReadBack {
+    /// A flag reads true: the app is in enhanced mode already.
+    Enabled,
+    /// No flag reads true and no read hit a busy app.
+    NotEnabled,
+    /// No flag reads true and a read hit a busy app (`kAXErrorCannotComplete`):
+    /// an earlier poke that timed out may still have taken effect, and poking
+    /// again would make the renderer rebuild its tree a second time.
+    Unknown,
+}
+
+/// A read refused for any other reason (an Electron app has no such
+/// attribute before its first poke) counts as "not enabled", or the poke
+/// would never run.
+fn enhanced_mode_read_back(
+    reads: &[Result<Option<bool>, cidre::os::Error>],
+) -> EnhancedModeReadBack {
+    if reads.iter().any(|read| matches!(read, Ok(Some(true)))) {
+        EnhancedModeReadBack::Enabled
+    } else if reads
+        .iter()
+        .any(|read| matches!(read, Err(err) if is_busy_enhanced_mode_error(err)))
+    {
+        EnhancedModeReadBack::Unknown
+    } else {
+        EnhancedModeReadBack::NotEnabled
+    }
+}
+
+/// The walker's gate for the enhanced-mode poke: the writes and the settle
+/// sleep all sit behind it. The set-once check runs first, so `bundle_id`
+/// (a window-server lookup when capture did not resolve it) runs at most
+/// once per pid.
+fn enhanced_mode_gate(
+    cache: &super::enhanced_mode_cache::EnhancedModeCache,
+    pid: i32,
+    bundle_id: impl FnOnce() -> String,
+    app_lower: &str,
 ) -> bool {
-    get_bool_attr(app, eui_attr).unwrap_or(false) || get_bool_attr(app, ama_attr).unwrap_or(false)
+    cache.should_enable_once(pid) && !skips_enhanced_mode_for(&bundle_id(), app_lower)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3579,6 +3642,71 @@ mod tests {
         assert!(cache.should_enable_once(10));
         retry_enhanced_mode_if_busy(&cache, 10, true, &[None, Some(ax::err::CANNOT_COMPLETE)]);
         assert!(!cache.should_enable_once(10));
+    }
+
+    #[test]
+    fn test_enhanced_mode_read_back_treats_a_busy_read_as_unknown() {
+        use EnhancedModeReadBack::*;
+        let busy = || Err(ax::err::CANNOT_COMPLETE);
+        // A flag that reads true settles it, whatever the other read did.
+        assert_eq!(enhanced_mode_read_back(&[Ok(Some(true)), busy()]), Enabled);
+        // A busy app cannot say whether an earlier poke took: poking again
+        // would rebuild its tree a second time.
+        assert_eq!(enhanced_mode_read_back(&[busy(), Ok(Some(false))]), Unknown);
+        assert_eq!(
+            enhanced_mode_read_back(&[busy(), Err(ax::err::ATTR_UNSUPPORTED)]),
+            Unknown
+        );
+        // An Electron app before its first poke has no such attribute yet:
+        // that is "not enabled", or the poke would never run.
+        assert_eq!(
+            enhanced_mode_read_back(&[Err(ax::err::ATTR_UNSUPPORTED), Ok(None)]),
+            NotEnabled
+        );
+        assert_eq!(
+            enhanced_mode_read_back(&[Ok(Some(false)), Ok(Some(false))]),
+            NotEnabled
+        );
+    }
+
+    #[test]
+    fn test_enhanced_mode_gate_never_opens_for_a_denied_office_app() {
+        use super::super::enhanced_mode_cache::EnhancedModeCache;
+        use std::cell::Cell;
+
+        let cache = EnhancedModeCache::new(Duration::from_secs(60));
+        let lookups = Cell::new(0);
+        let outlook = || {
+            lookups.set(lookups.get() + 1);
+            "com.microsoft.Outlook".to_string()
+        };
+        // Neither write nor settle runs: both sit behind this gate.
+        assert!(!enhanced_mode_gate(
+            &cache,
+            20,
+            outlook,
+            "microsoft outlook"
+        ));
+        // The set-once gate is checked first, so the bundle-id lookup runs at
+        // most once per pid.
+        assert!(!enhanced_mode_gate(
+            &cache,
+            20,
+            outlook,
+            "microsoft outlook"
+        ));
+        assert_eq!(lookups.get(), 1);
+        // An unresolved bundle id falls back to the app name.
+        assert!(!enhanced_mode_gate(
+            &cache,
+            21,
+            String::new,
+            "microsoft word"
+        ));
+        // An Electron app is poked once per pid.
+        let slack = || "com.tinyspeck.slackmacgap".to_string();
+        assert!(enhanced_mode_gate(&cache, 22, slack, "slack"));
+        assert!(!enhanced_mode_gate(&cache, 22, slack, "slack"));
     }
 
     #[test]
