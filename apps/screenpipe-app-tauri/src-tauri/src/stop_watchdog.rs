@@ -139,6 +139,7 @@ pub enum Stopped {
 /// The watchdog's one decision, kept pure because swap exhaustion cannot be
 /// reproduced in a test. `SSTOP` wins over the flag so the log names what
 /// `ps` would have shown.
+#[cfg(target_os = "macos")]
 fn stopped_how(status: u32, flags: u32) -> Option<Stopped> {
     if status == libc::SSTOP {
         Some(Stopped::Signal)
@@ -153,6 +154,7 @@ fn stopped_how(status: u32, flags: u32) -> Option<Stopped> {
 /// swap-exhaustion revive every tick keeps re-sending a harmless SIGCONT; log
 /// only when the reason changes, and again if the parent runs normally for a
 /// tick first.
+#[cfg(target_os = "macos")]
 fn should_log(last: &mut Option<Stopped>, now: Option<Stopped>) -> bool {
     let changed = now.is_some() && now != *last;
     *last = now;
