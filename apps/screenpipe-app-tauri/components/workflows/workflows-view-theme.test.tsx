@@ -131,8 +131,10 @@ function isInvertedControl(element: Element): boolean {
 // Favicons are drawn for a white tile, so the app-icon chips keep one in dark
 // mode too, like a browser's tab strip. Only those small tiles are allowed.
 function isIconTile(element: Element): boolean {
-  if (!element.matches("[class*='appIcon']")) return false;
-  const width = parseFloat(getComputedStyle(element).getPropertyValue("width"));
+  // The browser badge nested in a tile is part of the same favicon surface.
+  const tile = element.closest("[class*='appIcon']");
+  if (!tile) return false;
+  const width = parseFloat(getComputedStyle(tile).getPropertyValue("width"));
   return Number.isFinite(width) && width <= 28;
 }
 
