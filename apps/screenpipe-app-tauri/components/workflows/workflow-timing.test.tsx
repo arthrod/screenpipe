@@ -90,11 +90,13 @@ describe("workflow elapsed timing", () => {
     expect(screen.queryByText("Correct this workflow")).not.toBeInTheDocument();
     expect(screen.queryByText("Evidence and limitations")).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Questions and feedback" })).toBeVisible();
-    const global = screen.getByRole("button", { name: "Workflow timing" });
-    fireEvent.click(global);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("24m on average");
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    const timingControls = screen.getAllByRole("button", { name: "Workflow timing" });
+    for (const control of timingControls) {
+      fireEvent.click(control);
+      expect(screen.getByRole("tooltip")).toHaveTextContent("24m on average");
+      fireEvent.pointerDown(document.body);
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    }
     const step = screen.getByRole("button", { name: "Timing for step 1" });
     fireEvent.mouseEnter(step);
     expect(screen.getByRole("tooltip")).toHaveTextContent("5m on average");
