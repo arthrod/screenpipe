@@ -126,6 +126,32 @@ pub(crate) async fn should_use_ax_fallback(
 /// parameter on an unrelated page can't resolve (#4246). The stored
 /// `meeting_url` keeps the browser-reported form for parity with the DB
 /// evidence path.
+/// Resolve a mic-holding browser from the titles of ALL its tabs, for
+/// profiles that opt in via `browser_tab_title_patterns`.
+///
+/// Last resort after the URL probe: Firefox-family browsers (Zen) expose a URL
+/// only for the active tab, so a Google Voice call in a background tab has no
+/// URL evidence at all — but every tab title is in the window's AXTabGroup.
+/// Only called while the browser holds the mic (same gating as the URL probe);
+/// the title is identity, not proof of a call, which the mic hold supplies.
+/// No URL is known, so `meeting_url` is `None`.
+pub(crate) fn resolve_tab_title_candidate(
+    browser_app: &str,
+    tab_titles: &[String],
+    profiles: &[MeetingDetectionProfile],
+) -> Option<AxResolvedCandidate> {
+    profiles.iter().enumerate().find_map(|(idx, profile)| {
+        tab_titles
+            .iter()
+            .any(|title| browser_tab_title_matches_meeting(title, profile))
+            .then(|| AxResolvedCandidate {
+                browser_app: browser_app.to_string(),
+                profile_index: idx,
+                meeting_url: None,
+            })
+    })
+}
+
 pub(crate) fn resolve_active_tab_url_candidate(
     browser_app: &str,
     active_tab_url: &str,
@@ -648,6 +674,8 @@ pub(crate) fn platform_name_for_profile(
 
     if has_pattern("meet.google.com") {
         "Google Meet".to_string()
+    } else if has_pattern("voice.google.com") {
+        "Google Voice".to_string()
     } else if has_pattern("zoom.us") {
         "Zoom".to_string()
     } else if has_pattern("teams.microsoft.com") || has_pattern("teams.live.com") {

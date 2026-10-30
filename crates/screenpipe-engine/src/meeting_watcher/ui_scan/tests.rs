@@ -72,6 +72,7 @@ fn zoom_test_profile() -> MeetingDetectionProfile {
             windows_process_names: &["Zoom.exe"],
             browser_url_patterns: &["zoom.us/j", "zoom.us/wc"],
             browser_title_patterns: &[],
+            browser_tab_title_patterns: &[],
         },
         call_signals: vec![],
         min_signals_required: 1,

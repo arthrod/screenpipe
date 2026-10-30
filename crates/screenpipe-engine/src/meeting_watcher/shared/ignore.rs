@@ -45,6 +45,48 @@ pub(crate) fn browser_title_matches_pattern(title_lower: &str, pattern: &str) ->
     !(title_lower.as_bytes()[p_lower.len()] as char).is_ascii_alphanumeric()
 }
 
+/// Does the CoreAudio-reported browser app name denote this BSD process name?
+///
+/// CoreAudio attributes the mic to the bundle-derived display name
+/// (`browser_name_for_bundle`: "Zen Browser"), while `proc_name` reports the
+/// executable ("zen"). Equality is exact and case-insensitive after dropping a
+/// trailing " browser" from either side, so "Zen Browser" ↔ "zen" and
+/// "Brave Browser" ↔ "Brave Browser" match but "Arc" ↔ "Arc Helper" and
+/// "Chrome" ↔ "Google Chrome" do not (the loose `browser_names_match` would
+/// bind a helper process or the wrong browser).
+pub(crate) fn browser_process_name_matches(app: &str, process_name: &str) -> bool {
+    fn canonical(name: &str) -> &str {
+        const SUFFIX: &str = " browser";
+        let name = name.trim();
+        match name.len().checked_sub(SUFFIX.len()) {
+            Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(SUFFIX) => {
+                name[..i].trim_end()
+            }
+            _ => name,
+        }
+    }
+    let (app, process_name) = (canonical(app), canonical(process_name));
+    !app.is_empty() && app.eq_ignore_ascii_case(process_name)
+}
+
+/// Does a browser TAB title identify this profile? Anchored like
+/// `browser_title_patterns` (see `browser_title_matches_pattern`), but against
+/// `browser_tab_title_patterns`, which only the mic-gated active-tab probe
+/// consults — see the field's doc.
+pub(crate) fn browser_tab_title_matches_meeting(
+    title: &str,
+    profile: &MeetingDetectionProfile,
+) -> bool {
+    let patterns = profile.app_identifiers.browser_tab_title_patterns;
+    if patterns.is_empty() {
+        return false;
+    }
+    let title_lower = title.trim().to_lowercase();
+    patterns
+        .iter()
+        .any(|p| browser_title_matches_pattern(&title_lower, p))
+}
+
 /// Check if an app name is a known browser.
 pub(crate) fn is_browser_app(app_name: &str) -> bool {
     BROWSER_NAMES

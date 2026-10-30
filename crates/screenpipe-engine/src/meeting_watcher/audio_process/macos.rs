@@ -27,6 +27,11 @@ use crate::meeting_watcher::shared::profiles::MeetingDetectionProfile;
 /// with AppleScript-visible full-window titles subtracted so an already
 /// URL-resolved full window can't re-enter off a slug-shaped tab title.
 ///
+/// When no window URL matches, Little Arc titles (Arc only) and then the
+/// all-tab title walk (`browser_tab_titles`, profiles with
+/// `browser_tab_title_patterns`) are tried, so a Firefox-family browser whose
+/// meeting tab is in the background still resolves.
+///
 /// Only called while a browser candidate is still unresolved (same gating as
 /// `ax_resolved_candidates`), so the ~100ms osascript round-trip runs at most
 /// once per poll during that window. The whole probe is capped by a timeout so
@@ -83,6 +88,23 @@ pub(crate) async fn active_tab_url_candidates(
                             &applescript_titles,
                             &profiles,
                         )
+                    })
+                    .or_else(|| {
+                        // Last resort, for profiles that opt in via
+                        // `browser_tab_title_patterns`: Firefox-family
+                        // browsers (Zen) expose a URL only for the ACTIVE
+                        // tab, so a Google Voice call in a background tab
+                        // has no URL evidence — but every tab title is in
+                        // the window's AXTabGroup. Mic-gated like the rest
+                        // of this probe.
+                        if !profiles
+                            .iter()
+                            .any(|p| !p.app_identifiers.browser_tab_title_patterns.is_empty())
+                        {
+                            return None;
+                        }
+                        let tab_titles = crate::meeting_watcher::ui_scan::browser_tab_titles(pid);
+                        resolve_tab_title_candidate(app, &tab_titles, &profiles)
                     })?;
                 let profile = profiles.get(candidate.profile_index)?;
                 let platform = platform_name_for_profile(profile, true);

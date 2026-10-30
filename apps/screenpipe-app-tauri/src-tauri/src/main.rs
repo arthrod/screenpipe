@@ -125,6 +125,7 @@ mod pi;
 mod pi_command_queue;
 mod power_awake;
 mod port_conflict;
+mod process_activity;
 mod process_exit;
 mod provider_automations;
 mod recording;
@@ -148,6 +149,7 @@ mod tray;
 mod staged_update;
 mod stale_tier;
 mod startup_auth;
+mod stop_watchdog;
 mod update_restart;
 mod update_diagnostics;
 mod updates;
@@ -494,6 +496,13 @@ async fn main() {
         std::process::exit(if result.is_ok() { 0 } else { 1 });
     }
 
+    // `--watchdog <pid>`: the SIGCONT sidecar the app spawns for itself (see
+    // `stop_watchdog`). Runs before any Tauri, store, or server side effect.
+    #[cfg(target_os = "macos")]
+    if let Some(parent) = stop_watchdog::watchdog_target(&arguments) {
+        std::process::exit(stop_watchdog::run(parent));
+    }
+
     let relaunch_home_visible = process_exit::take_relaunch_home_visibility();
     // Handle private ACP subprocess modes before Tauri initializes. The
     // protocol host lives in core; desktop contributes only schedule projection.
@@ -748,6 +757,15 @@ async fn main() {
     // The webview gets this same decision through the
     // `is_telemetry_disabled_by_env` command (see commands.rs); it cannot read
     // the process env itself.
+
+    // This instance owns the launch (duplicates exited above). Keep macOS from
+    // napping, suspending, or terminating the recorder, and start the SIGCONT
+    // watchdog that undoes a BSD stop the app cannot recover from by itself.
+    #[cfg(target_os = "macos")]
+    {
+        process_activity::begin_recording_activity();
+        stop_watchdog::spawn_for_current_process();
+    }
 
     let app_version = env!("CARGO_PKG_VERSION");
     let sentry_guard = if !telemetry_disabled {

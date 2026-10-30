@@ -32,13 +32,14 @@ function formatCount(n: number): string {
  * Curated meeting apps the detector knows about. `value` is the canonical
  * string stored in the ignore list; `match` terms dedupe these against the
  * user's recently-used apps (so e.g. "Webex" appears once) and detect whether
- * an entry is already ignored. Google Meet has no native app — its value is
- * the URL pattern the detector matches in the browser.
+ * an entry is already ignored. Google Meet and Google Voice have no native
+ * app — their value is the URL pattern the detector matches in the browser.
  */
 const MEETING_APPS: { label: string; value: string; match: string[] }[] = [
   { label: "Zoom", value: "zoom", match: ["zoom"] },
   { label: "Microsoft Teams", value: "teams", match: ["teams", "microsoft teams", "msteams"] },
   { label: "Google Meet", value: "meet.google.com", match: ["meet.google.com", "google meet"] },
+  { label: "Google Voice", value: "voice.google.com", match: ["voice.google.com", "google voice"] },
   { label: "Discord", value: "discord", match: ["discord"] },
   { label: "Webex", value: "webex", match: ["webex"] },
   { label: "FaceTime", value: "facetime", match: ["facetime"] },

@@ -31,9 +31,9 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>This app requires screen capture access to record the screen.</string>
 	<key>NSSupportsAutomaticTermination</key>
-	<true/>
+	<false/>
 	<key>NSSupportsSuddenTermination</key>
-	<true/>
+	<false/>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>This app requires system extension access to capture audio output.</string>
 </dict>

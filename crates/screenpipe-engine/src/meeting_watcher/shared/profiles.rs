@@ -17,6 +17,13 @@ pub struct AppIdentifiers {
     /// Browsers like Arc show the page title (e.g. "Meet") instead of the URL.
     /// These are matched as exact case-insensitive window title equality.
     pub browser_title_patterns: &'static [&'static str],
+    /// Tab-title patterns for the mic-gated active-tab probe only (anchored,
+    /// see `browser_title_matches_pattern`). Firefox-family browsers (Firefox,
+    /// Zen) expose every tab's title through the window's AXTabGroup but a URL
+    /// only for the active tab, so a call in a BACKGROUND tab is invisible to
+    /// `browser_url_patterns`. These never feed the un-gated AX sweep: a title
+    /// alone is only evidence once the browser already holds the microphone.
+    pub browser_tab_title_patterns: &'static [&'static str],
 }
 
 /// A signal that indicates a call is in progress.
@@ -121,6 +128,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &["ms-teams.exe", "teams.exe"],
                 browser_url_patterns: &["teams.microsoft.com", "teams.live.com", "Microsoft Teams"],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::AutomationId("hangup-button"),
@@ -174,6 +182,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                     "zoom meeting",
                 ],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 // Windows: Zoom meeting window has title "Zoom Meeting" but
@@ -235,6 +244,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 browser_url_patterns: &["meet.google.com"],
                 // Arc and other browsers show just "Meet" as the page title
                 browser_title_patterns: &["Meet"],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::RoleWithName {
@@ -252,6 +262,37 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
             ignore_window_titles: &[],
             requires_call_signal: false,
         },
+        // Google Voice (browser only, voice.google.com). Calls are placed from
+        // the web app, so the mic holder is a browser and the only identity is
+        // the tab. Firefox-family browsers (Zen) show the bare page title as the
+        // window title and expose no AXDocument, so the active tab resolves via
+        // the AXWebArea URL and a background Voice tab via its "Voice - …" tab
+        // title (Google's product-name title format, language independent).
+        // No `browser_title_patterns`: the AX sweep is not mic-gated and a bare
+        // "Voice" window title would phantom-fire on any page about voice.
+        MeetingDetectionProfile {
+            app_identifiers: AppIdentifiers {
+                macos_app_names: &[],
+                windows_process_names: &[],
+                browser_url_patterns: &["voice.google.com"],
+                browser_title_patterns: &[],
+                browser_tab_title_patterns: &["Voice -"],
+            },
+            call_signals: vec![
+                CallSignal::RoleWithName {
+                    role: "AXButton",
+                    name_contains: "end call",
+                },
+                CallSignal::RoleWithName {
+                    role: "AXButton",
+                    name_contains: "hang up",
+                },
+                CallSignal::NameContains("end call"),
+            ],
+            min_signals_required: 1,
+            ignore_window_titles: &[],
+            requires_call_signal: false,
+        },
         // Browser Slack: the Huddles list shares the in-call title and /client/
         // URL. Use those only to find the browser, then require a huddle-specific
         // control. A generic "Leave" button can belong to another tab or dialog.
@@ -261,6 +302,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &[],
                 browser_url_patterns: &["app.slack.com/huddle"],
                 browser_title_patterns: &["Huddles"],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![CallSignal::RoleWithName {
                 role: "AXButton",
@@ -277,6 +319,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &["slack.exe"],
                 browser_url_patterns: &["app.slack.com/huddle"],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::RoleWithName {
@@ -299,6 +342,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &[],
                 browser_url_patterns: &[],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::RoleWithName {
@@ -321,6 +365,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &["webexmta.exe", "ciscowebex.exe"],
                 browser_url_patterns: &["webex.com"],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 // Webex runs messaging and meetings in one process. Its in-call
@@ -364,6 +409,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &[],
                 browser_url_patterns: &["discord.com", "discordapp.com"],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::NameContains("Voice Connected"),
@@ -387,6 +433,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &["signal.exe"],
                 browser_url_patterns: &[],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::RoleWithName {
@@ -436,6 +483,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &["whatsapp.exe"],
                 browser_url_patterns: &["web.whatsapp.com"],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 // macOS: locale-independent AXGroup id, only present during
@@ -470,6 +518,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 windows_process_names: &["telegram.exe"],
                 browser_url_patterns: &["web.telegram.org"],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::RoleWithName {
@@ -563,6 +612,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                     "8x8.vc",
                 ],
                 browser_title_patterns: &[],
+                browser_tab_title_patterns: &[],
             },
             call_signals: vec![
                 CallSignal::RoleWithName {

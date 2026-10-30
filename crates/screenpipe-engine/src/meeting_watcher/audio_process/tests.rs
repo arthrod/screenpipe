@@ -4967,3 +4967,102 @@ async fn pipeline_suppressed_old_room_on_the_live_session_keeps_the_new_meeting(
         .meeting_end
         .is_none());
 }
+
+// ── Google Voice calls placed from a browser (voice.google.com) ──────────────
+
+#[test]
+fn active_tab_google_voice_url_resolves_candidate() {
+    // Arthur's case: a Google Voice call from Zen Browser held the mic for
+    // 47 minutes and never resolved, so meetings-only audio never opened.
+    let profiles = load_detection_profiles();
+    let url = "https://voice.google.com/u/0/calls";
+    let candidate = resolve_active_tab_url_candidate("Zen Browser", url, &profiles)
+        .expect("google voice url should resolve to a candidate");
+    assert_eq!(candidate.browser_app, "Zen Browser");
+    assert_eq!(
+        platform_name_for_profile(&profiles[candidate.profile_index], true),
+        "Google Voice"
+    );
+    assert_eq!(candidate.meeting_url.as_deref(), Some(url));
+}
+
+#[test]
+fn google_voice_marketing_page_does_not_resolve() {
+    // workspace.google.com/products/voice/ is the product page, not the app.
+    let profiles = load_detection_profiles();
+    assert!(resolve_active_tab_url_candidate(
+        "Zen Browser",
+        "https://workspace.google.com/products/voice/",
+        &profiles
+    )
+    .is_none());
+}
+
+#[test]
+fn background_google_voice_tab_title_resolves_candidate() {
+    // Firefox-family browsers (Zen) expose every tab's title through the
+    // AXTabGroup but only the ACTIVE tab's URL. A call in a background Voice
+    // tab must resolve while the user reads LinkedIn in the foreground.
+    let profiles = load_detection_profiles();
+    let titles = vec![
+        "(3) Feed | LinkedIn".to_string(),
+        "Voice - Calls".to_string(),
+    ];
+    let candidate = resolve_tab_title_candidate("Zen Browser", &titles, &profiles)
+        .expect("background voice tab should resolve");
+    assert_eq!(candidate.browser_app, "Zen Browser");
+    assert_eq!(
+        platform_name_for_profile(&profiles[candidate.profile_index], true),
+        "Google Voice"
+    );
+    assert_eq!(candidate.meeting_url, None);
+}
+
+#[test]
+fn tab_title_fallback_is_anchored() {
+    // The pattern is anchored at the start of the tab title, so page titles
+    // that merely mention Voice (or carry a prefix) never resolve.
+    let profiles = load_detection_profiles();
+    for title in [
+        "Voicemail",
+        "Invoice - Acme",
+        "Google Voice Typing - Help",
+        "Meet the team",
+        "How to use Voice - Calls",
+        "",
+    ] {
+        assert!(
+            resolve_tab_title_candidate("Zen Browser", &[title.to_string()], &profiles).is_none(),
+            "{title:?} must not resolve"
+        );
+    }
+}
+
+#[test]
+fn tab_title_fallback_only_applies_to_profiles_that_opt_in() {
+    // Meet's window-title fallback stays window-only: a background tab titled
+    // "Meet" is not evidence of a call (that is what the Meet-code gate is for).
+    let profiles = load_detection_profiles();
+    assert!(resolve_tab_title_candidate("Zen Browser", &["Meet".to_string()], &profiles).is_none());
+}
+
+#[test]
+fn browser_process_name_alias_matches_zen() {
+    use crate::meeting_watcher::shared::ignore::browser_process_name_matches;
+    // CoreAudio reports the bundle-derived "Zen Browser"; proc_name says "zen".
+    assert!(browser_process_name_matches("Zen Browser", "zen"));
+    assert!(browser_process_name_matches("zen browser", "Zen"));
+    assert!(browser_process_name_matches(
+        "Google Chrome",
+        "Google Chrome"
+    ));
+    assert!(browser_process_name_matches(
+        "Brave Browser",
+        "Brave Browser"
+    ));
+    assert!(browser_process_name_matches("Arc", "arc"));
+    assert!(!browser_process_name_matches("Zen Browser", "zed"));
+    assert!(!browser_process_name_matches("Arc", "Arc Helper"));
+    assert!(!browser_process_name_matches("Chrome", "Google Chrome"));
+    assert!(!browser_process_name_matches("Browser", ""));
+}

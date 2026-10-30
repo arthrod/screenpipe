@@ -35,7 +35,8 @@ mod windows;
 
 #[cfg(target_os = "macos")]
 pub(crate) use macos::{
-    browser_window_titles, discord_profile, find_running_meeting_apps, resolve_browser_pid,
+    browser_tab_titles, browser_window_titles, discord_profile, find_running_meeting_apps,
+    resolve_browser_pid,
 };
 #[cfg(not(target_os = "macos"))]
 pub(crate) use null::resolve_browser_pid;
