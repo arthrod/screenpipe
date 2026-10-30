@@ -107,7 +107,7 @@ it("opens Workflows without the flag only when the local build sets the override
     for (const flag of [undefined, false]) expect(isWorkflowsRolloutEnabled(flag)).toBe(true);
     state.flag = false;
     render(<ProductSwitcher mode="screenpipe" onChange={vi.fn()} />);
-    expect(screen.getByRole("button", { name: "Switch workspace" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Switch workspace" })).toBeVisible();
     render(<WorkflowsRolloutSync />);
     await waitFor(() => expect(state.fetch).toHaveBeenCalled());
     expect(JSON.parse(state.fetch.mock.calls.at(-1)![1].body)).toEqual({ enabled: true });

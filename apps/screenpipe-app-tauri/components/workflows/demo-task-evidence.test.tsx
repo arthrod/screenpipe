@@ -22,7 +22,9 @@ const shownTime = (timestamp: string) => new Date(timestamp).toLocaleString(unde
 /** Walks a step's capture carousel once, collecting what each capture shows. */
 const walkCaptures = (step: HTMLElement, name: string, count: number, read: () => string | null | undefined) => Array.from({ length: count }, (_, index) => {
   if (index) fireEvent.click(within(step).getByRole("button", { name: `Next capture for ${name}` }));
-  expect(within(step).getByText(`${index + 1} / ${count}`)).toBeVisible();
+  // The step also carries the walkthrough's own "n / count" navigation; read the carousel's.
+  const carousel = within(step).getByRole("group", { name: `Captures for ${name}` });
+  expect(within(carousel).getByText(`${index + 1} / ${count}`)).toBeVisible();
   return read();
 });
 
@@ -42,6 +44,8 @@ describe("embedded evidence (scripted Detected Task)", () => {
       render(<WorkflowsApp platform={createFixtureWorkflowsPlatform(saved)} storageKey={null} reviewRequest={{ key: "demo", workflowId: DEMO_TASK_ID }} />);
     });
     for (const [index, ticket] of ["NOVA-25 (Bug)", "NOVA-26 (Bug)", "NOVA-27 (Task)"].entries()) {
+      // The walkthrough shows one step at a time; its navigation moves to the next.
+      if (index) fireEvent.click(within(screen.getByRole("navigation", { name: "Walkthrough navigation" })).getByRole("button", { name: "Next" }));
       expect((await screen.findByRole<HTMLInputElement>("textbox", { name: `Step ${index + 1} title` })).value).toContain(ticket);
       const step = screen.getByRole("article", { name: `Step ${index + 1}` });
       const shown = walkCaptures(step, task.stages[index].name, 3, () => {
