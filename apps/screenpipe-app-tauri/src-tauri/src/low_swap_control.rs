@@ -13,13 +13,25 @@
 //! installed app for 17 hours on 2026-10-29 (0 GB free, swap 14/18 GB, every
 //! thread parked mid-instruction, `ps` state S, `kill -CONT` revived it).
 //!
-//! A recorder must not be silently paused: the capture it misses is gone.
-//! `proc_setpcontrol(PROC_SETPC_NONE)` (libproc, public since 10.6) takes the
-//! process out of that pool at startup, so under the same pressure the kernel
-//! acts on another candidate instead and, if this app is ever the one holding
-//! half the compressor, kills it outright like any Finder-launched app, which
-//! is visible and recoverable, unlike a pause. `stop_watchdog` remains the
-//! second line for a pause that still happens.
+//! launchd spawns the app with the bit clear. It is LaunchServices' own
+//! application check-in that puts the process into the pool: proven on
+//! 2026-10-30 with a dyld interposer on `proc_setpcontrol`, the call is
+//! `proc_setpcontrol(PROC_SETPC_SUSPEND)` from `_LSApplicationCheckIn`
+//! (LaunchServices) <- `_RegisterApplication` (HIServices, dispatch_once) <-
+//! `+[NSApplication sharedApplication]` <- tao's `EventLoop::new` <-
+//! `tauri::Builder::build`. Every GUI app registered with LaunchServices
+//! carries it (Chrome, Zoom, Zed, the WebKit XPC helpers, ...); background
+//! agents, Finder and Dock do not. A recorder must not be silently paused:
+//! the capture it misses is gone. `proc_setpcontrol(PROC_SETPC_NONE)`
+//! (libproc, public since 10.6) takes the process back out, so under the same
+//! pressure the kernel acts on another candidate instead and, if this app is
+//! ever the one holding half the compressor, kills it outright like any
+//! unregistered process, which is visible and recoverable, unlike a pause.
+//! Because the check-in runs inside `build()`, the opt-out has to come after
+//! it: `keep_opted_out` asserts NONE from `RunEvent::Ready` and then every
+//! `REASSERT_INTERVAL` in case anything re-registers the process later; one
+//! syscall, nowhere near a hot path.
+//! `stop_watchdog` remains the second line for a pause that still happens.
 
 #[cfg(target_os = "macos")]
 mod imp {
@@ -58,7 +70,30 @@ mod imp {
         }
     }
 
-    /// Leave the kernel's suspend-on-swap-exhaustion pool. Idempotent.
+    /// How often `keep_opted_out` re-asserts the opt-out.
+    pub const REASSERT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Leave the pool now and keep leaving it every `REASSERT_INTERVAL` for
+    /// the life of the process. Idempotent: a second call is a no-op.
+    pub fn keep_opted_out() {
+        static STARTED: std::sync::Once = std::sync::Once::new();
+        STARTED.call_once(|| {
+            opt_out_of_low_swap_suspension();
+            std::thread::Builder::new()
+                .name("low-swap-control".into())
+                .spawn(|| loop {
+                    std::thread::sleep(REASSERT_INTERVAL);
+                    opt_out_of_low_swap_suspension();
+                })
+                .map(drop)
+                .unwrap_or_else(|error| {
+                    tracing::warn!("low swap control: re-assert thread failed to start: {error}")
+                });
+        });
+    }
+
+    /// Leave the kernel's suspend-on-swap-exhaustion pool. Idempotent and
+    /// quiet when already out.
     pub fn opt_out_of_low_swap_suspension() {
         let before = own_flags();
         if let Some(flags) = before {
@@ -92,11 +127,15 @@ mod imp {
 }
 
 #[cfg(target_os = "macos")]
-pub use imp::opt_out_of_low_swap_suspension;
+pub use imp::{keep_opted_out, opt_out_of_low_swap_suspension};
 
 /// No-op off macOS.
 #[cfg(not(target_os = "macos"))]
 pub fn opt_out_of_low_swap_suspension() {}
+
+/// No-op off macOS; see the module docs.
+#[cfg(not(target_os = "macos"))]
+pub fn keep_opted_out() {}
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
@@ -123,6 +162,15 @@ mod tests {
         );
         // Idempotent and quiet the second time.
         opt_out_of_low_swap_suspension();
+        assert!(!suspend_control_is_set(own_flags().unwrap()));
+
+        // The periodic form leaves the pool immediately as well, even when
+        // something (WebKit, in the app) put us back in after the first call.
+        set_own_pcontrol(PROC_SETPC_SUSPEND).expect("proc_setpcontrol(SUSPEND)");
+        assert!(suspend_control_is_set(own_flags().unwrap()));
+        keep_opted_out();
+        assert!(!suspend_control_is_set(own_flags().unwrap()));
+        keep_opted_out();
         assert!(!suspend_control_is_set(own_flags().unwrap()));
     }
 
