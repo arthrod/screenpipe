@@ -2,7 +2,7 @@
 // https://screenpipe.com
 import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { WorkflowLibrary } from "../../../../packages/workflows-ui/src/workflow-library";
 import { fixtureWorkflowAnalysis } from "../../../../packages/workflows-ui/src/fixture-platform";
 import { WorkflowsApp } from "../../../../packages/workflows-ui/src/workflows-app";
@@ -89,7 +89,7 @@ it("a background workflow revision does not close its open SOP", async () => {
   p.loadCapturedWork = vi.fn().mockResolvedValue(analysis);
   const view = render(<WorkflowsApp platform={p} initialAnalysis={analysis} storageKey={null} />);
   await waitFor(() => expect(screen.queryByText("Refreshing saved workflows…")).toBeNull());
-  fireEvent.click(screen.getByRole("button", { name: "Open map", exact: true }));
+  fireEvent.click(within(screen.getByRole("heading", { name: workflow.title }).closest("article")!).getByRole("button", { name: "Open map" }));
   fireEvent.click(screen.getByRole("button", { name: "More workflow actions" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Open SOP", exact: true }));
   expect(await screen.findByText("Saved summary")).toBeTruthy();
@@ -107,6 +107,16 @@ it("shares the current skill only when Share is clicked", async () => {
   render(<WorkflowLibrary platform={p} workflows={[]} onShareDocument={share} />);
   await screen.findByLabelText("Instructions");
   expect(share).not.toHaveBeenCalled();
+  const editor = screen.getByLabelText("Instructions");
+  expect(screen.queryByRole("toolbar", { name: "Instructions formatting" })).toBeNull();
+  act(() => {
+    editor.focus();
+    const range = document.createRange();
+    range.selectNodeContents(editor.querySelector("p")!);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+  });
+  fireEvent(document, new Event("selectionchange"));
   expect(screen.getByRole("toolbar", { name: "Instructions formatting" })).toBeTruthy();
   fireEvent.change(screen.getByLabelText("When to use"), { target: { value: 'Use: "carefully"' } });
   fireEvent.click(screen.getByRole("button", { name: "Share", exact: true }));

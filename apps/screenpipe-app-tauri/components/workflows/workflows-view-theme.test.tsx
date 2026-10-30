@@ -51,7 +51,11 @@ function injectStylesheets() {
     // Odd parts are `:global(...)` contents and keep their names.
     const css = source.split(/:global\(([^()]*)\)/).map((part, index) => index % 2
       ? part
-      : part.replace(/\.([A-Za-z_][\w-]*)/g, (whole, name: string) => names[name] ? `.${names[name]}` : whole)).join("");
+      : part.replace(/\.([A-Za-z_][\w-]*)/g, (whole, name: string) => names[name] ? `.${names[name]}` : whole)).join("")
+      // jsdom's selector engine emulates `:has()` by rebuilding a selector from
+      // the subject element, which breaks on React's `:r8:`-style ids. Those
+      // rules only re-tint an ancestor the children already paint; drop them.
+      .replace(/[^{}]*:has\([^)]*\)[^{}]*\{[^{}]*\}/g, "");
     const style = document.createElement("style");
     style.dataset.workflowsTheme = file;
     style.textContent = css;
@@ -124,6 +128,16 @@ function isInvertedControl(element: Element): boolean {
   return text !== undefined && luminance(text) < 0.1;
 }
 
+// Favicons are drawn for a white tile, so the app-icon chips keep one in dark
+// mode too, like a browser's tab strip. Only those small tiles are allowed.
+function isIconTile(element: Element): boolean {
+  // The browser badge nested in a tile is part of the same favicon surface.
+  const tile = element.closest("[class*='appIcon']");
+  if (!tile) return false;
+  const width = parseFloat(getComputedStyle(tile).getPropertyValue("width"));
+  return Number.isFinite(width) && width <= 28;
+}
+
 function lightSurfaces(root: Element): string[] {
   const offenders: string[] = [];
   for (const element of [root, ...root.querySelectorAll("*")]) {
@@ -134,7 +148,7 @@ function lightSurfaces(root: Element): string[] {
     const resolved = resolve(element, painted);
     const scheme = `${style.getPropertyValue("color-scheme")} ${(element as HTMLElement).style?.colorScheme ?? ""}`;
     const label = `<${element.tagName.toLowerCase()} class="${element.getAttribute("class") ?? ""}"${element.getAttribute("aria-label") ? ` aria-label="${element.getAttribute("aria-label")}"` : ""}>`;
-    if (colours(resolved).some(isLightSurface) && !isInvertedControl(element)) offenders.push(`${label} paints ${resolved.trim()}`);
+    if (colours(resolved).some(isLightSurface) && !isInvertedControl(element) && !isIconTile(element)) offenders.push(`${label} paints ${resolved.trim()}`);
     if (/\blight\b/.test(scheme) && !/\bdark\b/.test(scheme)) offenders.push(`${label} forces color-scheme ${scheme.trim()}`);
   }
   return offenders;

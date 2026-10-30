@@ -261,6 +261,15 @@ describe("ReplayStrip", () => {
       ),
     );
 
+    // The cursor is placed on frame 1 only once frames and audio chunks have
+    // both loaded; press Home after that, or the placement lands on top of it.
+    await waitFor(() =>
+      expect(screen.getByTestId("replay-scrubber")).toHaveAttribute(
+        "aria-valuenow",
+        "120",
+      ),
+    );
+
     // Home seeks to rangeStart (meetingStart), 2 minutes before frame 1.
     fireEvent.keyDown(screen.getByTestId("replay-scrubber"), { key: "Home" });
 
