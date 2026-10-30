@@ -121,8 +121,8 @@ where
 pub enum Tick {
     /// Parent is running (or sleeping) normally.
     Running,
-    /// Parent was stopped and SIGCONT was sent.
-    Revived,
+    /// Parent was stopped and SIGCONT was sent; carries its `pbi_flags`.
+    Revived(u32),
     /// Parent is stopped under a debugger; left alone.
     Traced,
     /// Parent could not be inspected this tick (errno); keep watching.
@@ -179,11 +179,7 @@ pub fn tick(parent: i32) -> Tick {
     // SAFETY: plain signal send to a pid we just inspected.
     let sent = unsafe { libc::kill(parent, libc::SIGCONT) } == 0;
     if sent {
-        log_line(&format!(
-            "parent pid={parent} was stopped (SSTOP) with pbi_flags={}",
-            describe_flags(info.pbi_flags)
-        ));
-        Tick::Revived
+        Tick::Revived(info.pbi_flags)
     } else {
         Tick::Gone
     }
@@ -244,9 +240,10 @@ pub fn run(parent: i32) -> i32 {
                     unreadable_logged = true;
                 }
             }
-            Tick::Revived => {
+            Tick::Revived(flags) => {
                 log_line(&format!(
-                    "parent pid={parent} was stopped (SSTOP); sent SIGCONT"
+                    "parent pid={parent} was stopped (SSTOP) with pbi_flags={}; sent SIGCONT",
+                    describe_flags(flags)
                 ));
             }
             Tick::Traced => {
@@ -356,7 +353,7 @@ mod tests {
         assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
         wait_for(pid, Some(true));
 
-        assert_eq!(tick(pid), Tick::Revived);
+        assert!(matches!(tick(pid), Tick::Revived(_)));
         wait_for(pid, Some(false));
         assert_eq!(tick(pid), Tick::Running);
 
