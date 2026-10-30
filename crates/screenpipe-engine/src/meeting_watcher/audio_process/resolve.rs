@@ -177,6 +177,41 @@ pub(crate) fn resolve_active_tab_url_candidate(
     })
 }
 
+/// Resolve one browser process's candidate from its evidence sources in
+/// order: active-tab URLs, then Little Arc window titles, then tab titles.
+/// A candidate for a platform the user ignores is skipped *at its source* so
+/// the next source still gets its turn: an ignored Meet URL in one window
+/// must not shadow a Google Voice call in a background tab.
+pub(crate) fn resolve_browser_candidate_chain(
+    browser_app: &str,
+    active_tab_urls: &[String],
+    little_arc: impl FnOnce() -> Option<AxResolvedCandidate>,
+    tab_titles: impl FnOnce() -> Vec<String>,
+    profiles: &[MeetingDetectionProfile],
+    ignored_terms: &[String],
+) -> Option<AxResolvedCandidate> {
+    let accepted = |candidate: AxResolvedCandidate| {
+        let profile = profiles.get(candidate.profile_index)?;
+        let platform = platform_name_for_profile(profile, true);
+        (!meeting_app_is_ignored_with_terms(&platform, profile, ignored_terms)).then_some(candidate)
+    };
+    active_tab_urls
+        .iter()
+        .find_map(|url| {
+            resolve_active_tab_url_candidate(browser_app, url, profiles).and_then(&accepted)
+        })
+        .or_else(|| little_arc().and_then(&accepted))
+        .or_else(|| {
+            if !profiles
+                .iter()
+                .any(|p| !p.app_identifiers.browser_tab_title_patterns.is_empty())
+            {
+                return None;
+            }
+            resolve_tab_title_candidate(browser_app, &tab_titles(), profiles).and_then(&accepted)
+        })
+}
+
 /// Return the Google Meet meeting code if a window title IS one: exactly
 /// `xxx-yyyy-zzz`, lowercase ASCII letters (the regex `^[a-z]{3}-[a-z]{4}-[a-z]{3}$`).
 ///

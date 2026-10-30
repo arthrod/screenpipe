@@ -28,10 +28,72 @@ pub const WATCHDOG_ARG: &str = "--watchdog";
 /// How often the watchdog samples the parent's BSD process state.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(15);
 
-/// `p_flag` bit for a process under ptrace (`P_TRACED` in `sys/proc.h`,
-/// surfaced as `PROC_FLAG_TRACED` in `proc_bsdinfo.pbi_flags`).
+/// `proc_bsdinfo.pbi_flags` bits, from XNU `bsd/sys/proc_info.h`. These are
+/// the proc_info values, NOT the kernel-internal `p_flag` bits (`P_TRACED`
+/// there is 0x800, which proc_info reports as `PROC_FLAG_PA_THROTTLE`).
 #[cfg(target_os = "macos")]
-const PROC_FLAG_TRACED: u32 = 0x0000_0800;
+const PROC_FLAG_TRACED: u32 = 0x2;
+/// "In resource starvation situations, this process is to be suspended."
+#[cfg(target_os = "macos")]
+const PROC_FLAG_PC_SUSP: u32 = 0x400;
+/// "The process is currently suspended due to resource starvation."
+#[cfg(target_os = "macos")]
+const PROC_FLAG_PA_SUSP: u32 = 0x1000;
+
+#[cfg(target_os = "macos")]
+fn is_traced(flags: u32) -> bool {
+    flags & PROC_FLAG_TRACED != 0
+}
+
+/// `pbi_flags` as hex plus the names that matter for a stopped app, so the
+/// watchdog log says whether macOS suspended it for resource starvation.
+#[cfg(target_os = "macos")]
+fn describe_flags(flags: u32) -> String {
+    let mut names = Vec::new();
+    if is_traced(flags) {
+        names.push("TRACED");
+    }
+    if flags & PROC_FLAG_PC_SUSP != 0 {
+        names.push("PC_SUSP");
+    }
+    if flags & PROC_FLAG_PA_SUSP != 0 {
+        names.push("PA_SUSP");
+    }
+    if names.is_empty() {
+        format!("{flags:#x}")
+    } else {
+        format!("{flags:#x} [{}]", names.join(" "))
+    }
+}
+
+/// The watchdog is the app's child; once the app exits it is re-parented to
+/// launchd. Checking this before every tick means a reused pid can never be
+/// mistaken for the app.
+#[cfg(target_os = "macos")]
+fn parent_still_ours(parent: i32) -> bool {
+    // SAFETY: plain syscall.
+    let ppid = unsafe { libc::getppid() };
+    ppid == parent
+}
+
+/// Why `bsd_info` could not read a process.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Probe {
+    /// No such process.
+    Gone,
+    /// The process exists but could not be inspected (errno); keep watching.
+    Unreadable(i32),
+}
+
+#[cfg(target_os = "macos")]
+fn classify_probe_error(errno: i32) -> Probe {
+    if errno == libc::ESRCH {
+        Probe::Gone
+    } else {
+        Probe::Unreadable(errno)
+    }
+}
 
 /// Parse the parent pid out of `--watchdog <pid>`.
 ///
@@ -63,13 +125,15 @@ pub enum Tick {
     Revived,
     /// Parent is stopped under a debugger; left alone.
     Traced,
+    /// Parent could not be inspected this tick (errno); keep watching.
+    Unreadable(i32),
     /// Parent no longer exists: the watchdog should exit.
     Gone,
 }
 
 /// Parent's BSD state via `proc_pidinfo(PROC_PIDTBSDINFO)`.
 #[cfg(target_os = "macos")]
-fn bsd_info(pid: i32) -> Option<libc::proc_bsdinfo> {
+fn bsd_info(pid: i32) -> Result<libc::proc_bsdinfo, Probe> {
     // SAFETY: proc_bsdinfo is plain data; proc_pidinfo fills exactly `size`
     // bytes on success and reports how many it wrote.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -83,31 +147,42 @@ fn bsd_info(pid: i32) -> Option<libc::proc_bsdinfo> {
             size,
         )
     };
-    (written == size).then_some(info)
+    if written == size {
+        Ok(info)
+    } else {
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        Err(classify_probe_error(errno))
+    }
 }
 
 /// Is the process stopped at the BSD level (`SSTOP`, what `ps` shows as `T`)?
 /// `None` when there is no such process (or it cannot be inspected).
 #[cfg(target_os = "macos")]
 pub fn process_is_stopped(pid: i32) -> Option<bool> {
-    bsd_info(pid).map(|info| info.pbi_status == libc::SSTOP)
+    bsd_info(pid).ok().map(|info| info.pbi_status == libc::SSTOP)
 }
 
 /// One watchdog tick: inspect the parent and continue it if it is stopped.
 #[cfg(target_os = "macos")]
 pub fn tick(parent: i32) -> Tick {
-    let Some(info) = bsd_info(parent) else {
-        return Tick::Gone;
+    let info = match bsd_info(parent) {
+        Ok(info) => info,
+        Err(Probe::Gone) => return Tick::Gone,
+        Err(Probe::Unreadable(errno)) => return Tick::Unreadable(errno),
     };
     if info.pbi_status != libc::SSTOP {
         return Tick::Running;
     }
-    if info.pbi_flags & PROC_FLAG_TRACED != 0 {
+    if is_traced(info.pbi_flags) {
         return Tick::Traced;
     }
     // SAFETY: plain signal send to a pid we just inspected.
     let sent = unsafe { libc::kill(parent, libc::SIGCONT) } == 0;
     if sent {
+        log_line(&format!(
+            "parent pid={parent} was stopped (SSTOP) with pbi_flags={}",
+            describe_flags(info.pbi_flags)
+        ));
         Tick::Revived
     } else {
         Tick::Gone
@@ -150,10 +225,25 @@ fn log_line(message: &str) {
 #[cfg(target_os = "macos")]
 pub fn run(parent: i32) -> i32 {
     log_line(&format!("watching parent pid={parent}"));
+    let mut unreadable_logged = false;
     loop {
         std::thread::sleep(POLL_INTERVAL);
+        if !parent_still_ours(parent) {
+            log_line(&format!(
+                "parent pid={parent} exited (watchdog re-parented); exiting"
+            ));
+            return 0;
+        }
         match tick(parent) {
             Tick::Running => {}
+            Tick::Unreadable(errno) => {
+                if !unreadable_logged {
+                    log_line(&format!(
+                        "parent pid={parent} could not be inspected (errno {errno}); still watching"
+                    ));
+                    unreadable_logged = true;
+                }
+            }
             Tick::Revived => {
                 log_line(&format!(
                     "parent pid={parent} was stopped (SSTOP); sent SIGCONT"
@@ -272,6 +362,48 @@ mod tests {
 
         child.kill().expect("kill sleep");
         child.wait().expect("reap sleep");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn traced_flag_is_the_proc_info_bit() {
+        // bsd/sys/proc_info.h: PROC_FLAG_TRACED is 2. 0x800 is
+        // PROC_FLAG_PA_THROTTLE, the resource-starvation throttle.
+        assert_eq!(PROC_FLAG_TRACED, 0x2);
+        assert!(is_traced(PROC_FLAG_TRACED));
+        assert!(!is_traced(0x800));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn starvation_suspension_is_named_in_the_flag_description() {
+        assert_eq!(describe_flags(0x1000), "0x1000 [PA_SUSP]");
+        assert_eq!(describe_flags(0x400 | 0x2), "0x402 [TRACED PC_SUSP]");
+        assert_eq!(describe_flags(0), "0x0");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parent_identity_follows_getppid() {
+        // SAFETY: plain syscall.
+        let ppid = unsafe { libc::getppid() };
+        assert!(parent_still_ours(ppid));
+        assert!(!parent_still_ours(std::process::id() as i32));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn probe_separates_a_missing_process_from_an_unreadable_one() {
+        let mut child = std::process::Command::new("/usr/bin/true")
+            .spawn()
+            .expect("spawn true");
+        let pid = child.id() as i32;
+        child.wait().expect("reap true");
+        assert!(matches!(bsd_info(pid), Err(Probe::Gone)));
+        assert_eq!(tick(pid), Tick::Gone);
+        // Any other errno keeps the watchdog alive instead of abandoning the app.
+        assert_eq!(classify_probe_error(libc::ESRCH), Probe::Gone);
+        assert_eq!(classify_probe_error(libc::EPERM), Probe::Unreadable(libc::EPERM));
     }
 
     #[cfg(target_os = "macos")]

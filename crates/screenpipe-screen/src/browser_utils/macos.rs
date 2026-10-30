@@ -15,6 +15,7 @@ use core_foundation::{
     url::CFURL,
 };
 use screenpipe_core::osascript::{self, OsascriptOutcome};
+use std::time::{Duration, Instant};
 use tracing::debug;
 use url::Url;
 
@@ -41,6 +42,39 @@ const AX_PROBE_MESSAGING_TIMEOUT_SECS: f32 = 1.0;
 /// browsers (Firefox, Zen) nest it 2–4 levels under the window; the bound keeps
 /// the per-window fallback from turning into a full-chrome walk.
 const WEB_AREA_MAX_DEPTH: usize = 8;
+
+/// `find_web_area_url` recurses over siblings as well as depth, so a broad AX
+/// tree (a window with thousands of chrome elements) could otherwise spend the
+/// caller's whole 3s timeout on one window — and that timeout only abandons
+/// the blocking thread, it cannot stop it. One `WalkBudget` covers every window
+/// of a probe: nodes visited and wall time are both capped, URLs collected
+/// from earlier windows are kept, and a later window never pays for an
+/// earlier wide one.
+const WEB_AREA_WALK_DEADLINE: Duration = Duration::from_millis(1_200);
+const WEB_AREA_MAX_NODES: usize = 1_500;
+
+struct WalkBudget {
+    deadline: Instant,
+    nodes_left: usize,
+}
+
+impl WalkBudget {
+    fn new(deadline: Duration, nodes: usize) -> Self {
+        Self {
+            deadline: Instant::now() + deadline,
+            nodes_left: nodes,
+        }
+    }
+
+    /// Spend one node; `false` once the node count or the deadline is used up.
+    fn charge(&mut self) -> bool {
+        if self.nodes_left == 0 || Instant::now() >= self.deadline {
+            return false;
+        }
+        self.nodes_left -= 1;
+        true
+    }
+}
 
 /// Role of the page-content element. Firefox-family browsers expose the page
 /// URL as this element's `AXURL` instead of a window `AXDocument`.
@@ -233,8 +267,13 @@ impl MacOSUrlDetector {
     /// `WEB_AREA_MAX_DEPTH`). Used for non-focused windows, where the full
     /// address-bar walk is too expensive per window but an AXDocument-less
     /// Firefox-family window would otherwise report nothing.
-    unsafe fn find_web_area_url(&self, element: AXUIElementRef, depth: usize) -> Option<String> {
-        if depth >= WEB_AREA_MAX_DEPTH {
+    unsafe fn find_web_area_url(
+        &self,
+        element: AXUIElementRef,
+        depth: usize,
+        budget: &mut WalkBudget,
+    ) -> Option<String> {
+        if depth >= WEB_AREA_MAX_DEPTH || !budget.charge() {
             return None;
         }
         let mut role: CFTypeRef = std::ptr::null_mut();
@@ -260,7 +299,11 @@ impl MacOSUrlDetector {
             let children_array =
                 CFArray::<*const std::ffi::c_void>::wrap_under_create_rule(children as _);
             for child in children_array.iter() {
-                if let Some(url) = self.find_web_area_url(*child as AXUIElementRef, depth + 1) {
+                let child = *child as AXUIElementRef;
+                // The messaging timeout is per element: without this a hung
+                // child would block ~6s (system default) per read.
+                let _ = AXUIElementSetMessagingTimeout(child, AX_PROBE_MESSAGING_TIMEOUT_SECS);
+                if let Some(url) = self.find_web_area_url(child, depth + 1, budget) {
                     return Some(url);
                 }
             }
@@ -482,6 +525,7 @@ end tell"#;
                 // +1 retained — create_rule releases the array on drop
                 let windows =
                     CFArray::<*const std::ffi::c_void>::wrap_under_create_rule(windows_ref as _);
+                let mut budget = WalkBudget::new(WEB_AREA_WALK_DEADLINE, WEB_AREA_MAX_NODES);
                 for (i, window) in windows.iter().enumerate() {
                     if i >= MAX_PROBED_WINDOWS {
                         break;
@@ -494,7 +538,7 @@ end tell"#;
                     // bounded AXWebArea lookup instead.
                     let url = self
                         .window_document_url(window)
-                        .or_else(|| self.find_web_area_url(window, 0));
+                        .or_else(|| self.find_web_area_url(window, 0, &mut budget));
                     if let Some(url) = url {
                         if !urls.contains(&url) {
                             urls.push(url);
@@ -588,5 +632,35 @@ impl BrowserUrlDetector for MacOSUrlDetector {
         } else {
             Ok(Vec::new())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walk_budget_stops_at_the_node_limit() {
+        let mut budget = WalkBudget::new(Duration::from_secs(10), 2);
+        assert!(budget.charge());
+        assert!(budget.charge());
+        assert!(!budget.charge());
+        assert!(!budget.charge(), "exhaustion is sticky");
+    }
+
+    #[test]
+    fn walk_budget_stops_at_the_deadline() {
+        let mut budget = WalkBudget::new(Duration::ZERO, 1_000);
+        assert!(!budget.charge());
+    }
+
+    #[test]
+    fn walk_budget_fits_inside_the_probe_timeout() {
+        // audio_process::macos wraps the probe in a 3s timeout; the walk must
+        // leave room for the per-element messaging timeout to fire once.
+        assert!(
+            WEB_AREA_WALK_DEADLINE + Duration::from_secs_f32(AX_PROBE_MESSAGING_TIMEOUT_SECS)
+                < Duration::from_secs(3)
+        );
     }
 }

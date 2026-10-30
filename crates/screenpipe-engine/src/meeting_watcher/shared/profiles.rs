@@ -23,6 +23,10 @@ pub struct AppIdentifiers {
     /// only for the active tab, so a call in a BACKGROUND tab is invisible to
     /// `browser_url_patterns`. These never feed the un-gated AX sweep: a title
     /// alone is only evidence once the browser already holds the microphone.
+    /// Known trade-off: the microphone is owned per browser PROCESS, so while
+    /// another tab of the same browser holds it, an idle matching tab still
+    /// resolves; `requires_call_signal` cannot close that gap because the
+    /// end-call controls of a background tab are not in the AX tree.
     pub browser_tab_title_patterns: &'static [&'static str],
 }
 

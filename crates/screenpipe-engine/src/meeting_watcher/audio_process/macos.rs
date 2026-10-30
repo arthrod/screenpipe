@@ -63,10 +63,10 @@ pub(crate) async fn active_tab_url_candidates(
                         Vec::new()
                     }
                 };
-                let candidate = urls
-                    .iter()
-                    .find_map(|url| resolve_active_tab_url_candidate(app, url, &profiles))
-                    .or_else(|| {
+                let candidate = resolve_browser_candidate_chain(
+                    app,
+                    &urls,
+                    || {
                         // Gate before the AX round-trip: only Arc has Little
                         // Arc windows, so don't pay for window titles on other
                         // browsers.
@@ -88,24 +88,17 @@ pub(crate) async fn active_tab_url_candidates(
                             &applescript_titles,
                             &profiles,
                         )
-                    })
-                    .or_else(|| {
-                        // Last resort, for profiles that opt in via
-                        // `browser_tab_title_patterns`: Firefox-family
-                        // browsers (Zen) expose a URL only for the ACTIVE
-                        // tab, so a Google Voice call in a background tab
-                        // has no URL evidence — but every tab title is in
-                        // the window's AXTabGroup. Mic-gated like the rest
-                        // of this probe.
-                        if !profiles
-                            .iter()
-                            .any(|p| !p.app_identifiers.browser_tab_title_patterns.is_empty())
-                        {
-                            return None;
-                        }
-                        let tab_titles = crate::meeting_watcher::ui_scan::browser_tab_titles(pid);
-                        resolve_tab_title_candidate(app, &tab_titles, &profiles)
-                    })?;
+                    },
+                    // Last resort, for profiles that opt in via
+                    // `browser_tab_title_patterns`: Firefox-family browsers
+                    // (Zen) expose a URL only for the ACTIVE tab, so a Google
+                    // Voice call in a background tab has no URL evidence — but
+                    // every tab title is in the window's AXTabGroup.
+                    // Mic-gated like the rest of this probe.
+                    || crate::meeting_watcher::ui_scan::browser_tab_titles(pid),
+                    &profiles,
+                    &ignored_terms,
+                )?;
                 let profile = profiles.get(candidate.profile_index)?;
                 let platform = platform_name_for_profile(profile, true);
                 if meeting_app_is_ignored_with_terms(&platform, profile, &ignored_terms) {

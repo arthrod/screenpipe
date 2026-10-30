@@ -5019,6 +5019,62 @@ fn background_google_voice_tab_title_resolves_candidate() {
 }
 
 #[test]
+fn ignored_url_profile_does_not_shadow_tab_title_fallback() {
+    // An active-tab Meet URL the user ignores must be skipped at its source,
+    // so the tab-title fallback still resolves the background Voice call.
+    let profiles = load_detection_profiles();
+    let urls = vec!["https://meet.google.com/abc-defg-hij".to_string()];
+    let titles = vec!["Voice - Calls".to_string()];
+    let ignore_meet = crate::meeting_watcher::shared::ignore::normalize_ignored_meeting_apps(&[
+        "Google Meet".to_string(),
+    ]);
+    let candidate = resolve_browser_candidate_chain(
+        "Zen Browser",
+        &urls,
+        || None,
+        || titles.clone(),
+        &profiles,
+        &ignore_meet,
+    )
+    .expect("voice tab should resolve past the ignored meet url");
+    assert_eq!(
+        platform_name_for_profile(&profiles[candidate.profile_index], true),
+        "Google Voice"
+    );
+
+    // Nothing ignored: the URL evidence wins, as before.
+    let candidate = resolve_browser_candidate_chain(
+        "Zen Browser",
+        &urls,
+        || None,
+        || titles.clone(),
+        &profiles,
+        &[],
+    )
+    .expect("meet url should resolve");
+    assert_eq!(
+        platform_name_for_profile(&profiles[candidate.profile_index], true),
+        "Google Meet"
+    );
+
+    // Both ignored: no candidate, and the tab titles are still only read once
+    // the earlier sources came up empty.
+    let ignore_both = crate::meeting_watcher::shared::ignore::normalize_ignored_meeting_apps(&[
+        "Google Meet".to_string(),
+        "Google Voice".to_string(),
+    ]);
+    assert!(resolve_browser_candidate_chain(
+        "Zen Browser",
+        &urls,
+        || None,
+        || titles.clone(),
+        &profiles,
+        &ignore_both
+    )
+    .is_none());
+}
+
+#[test]
 fn tab_title_fallback_is_anchored() {
     // The pattern is anchored at the start of the tab title, so page titles
     // that merely mention Voice (or carry a prefix) never resolve.
