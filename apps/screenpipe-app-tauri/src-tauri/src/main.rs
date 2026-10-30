@@ -150,6 +150,7 @@ mod staged_update;
 mod stale_tier;
 mod startup_auth;
 mod stop_watchdog;
+mod low_swap_control;
 mod update_restart;
 mod update_diagnostics;
 mod updates;
@@ -759,8 +760,13 @@ async fn main() {
     // the process env itself.
 
     // This instance owns the launch (duplicates exited above). Keep macOS from
-    // napping, suspending, or terminating the recorder, and start the SIGCONT
-    // watchdog that undoes a BSD stop the app cannot recover from by itself.
+    // napping, suspending, or terminating the recorder: hold a process
+    // activity and start the SIGCONT watchdog that undoes a stop or
+    // suspension the app cannot recover from by itself. The opt-out from the
+    // kernel's suspend-on-swap-exhaustion pool (what froze the app for 17 h
+    // on 2026-10-29) comes later, from `RunEvent::Ready`: LaunchServices'
+    // application check-in inside `tauri::Builder::build` is what enters the
+    // pool, so opting out here would be undone.
     #[cfg(target_os = "macos")]
     {
         process_activity::begin_recording_activity();
@@ -2613,6 +2619,12 @@ async fn main() {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             match event {
                 tauri::RunEvent::Ready { .. } => {
+                    // LaunchServices checked the app in during `build()`,
+                    // which put it into the kernel's suspend-on-swap-exhaustion
+                    // pool; leave it for good (re-asserted periodically: see
+                    // `low_swap_control`).
+                    #[cfg(target_os = "macos")]
+                    low_swap_control::keep_opted_out();
                     debug!("Ready event");
                     // Send app started event
                     let app_handle = app_handle.app_handle().clone();
