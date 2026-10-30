@@ -582,6 +582,7 @@ pub(crate) fn discord_profile() -> Option<MeetingDetectionProfile> {
             windows_process_names: &[],
             browser_url_patterns: &[],
             browser_title_patterns: &[],
+            browser_tab_title_patterns: &[],
         },
         call_signals: vec![
             CallSignal::MenuBarItem {
@@ -602,6 +603,89 @@ pub(crate) fn discord_profile() -> Option<MeetingDetectionProfile> {
     })
 }
 
+/// Titles of EVERY tab of a browser process, read from each window's
+/// AXTabGroup.
+///
+/// Firefox-family browsers (Firefox, Zen) expose no AXDocument and a URL only
+/// for the active tab, but the tab strip is an AXTabGroup whose AXRadioButton
+/// children carry every tab's title (Chromium exposes AXTab children). The
+/// walk is shallow by construction: it never descends into AXWebArea (page
+/// content), stops at `TAB_WALK_MAX_DEPTH`, and spends at most
+/// `TAB_WALK_BUDGET` of synchronous AX IPC per call. Only the mic-gated
+/// active-tab probe calls this, after the URL probe found nothing.
+pub(crate) fn browser_tab_titles(pid: i32) -> Vec<String> {
+    const TAB_WALK_MAX_DEPTH: usize = 6;
+    const TAB_WALK_MAX_WINDOWS: usize = 16;
+    const TAB_WALK_BUDGET: Duration = Duration::from_millis(400);
+
+    cidre::objc::ar_pool(|| -> Vec<String> {
+        let ax_app = cidre::ax::UiElement::with_app_pid(pid);
+        let _ = ax_app.set_messaging_timeout_secs(0.3);
+        let start = Instant::now();
+        let mut titles = Vec::new();
+        if let Ok(windows) = ax_app.children() {
+            for i in 0..windows.len().min(TAB_WALK_MAX_WINDOWS) {
+                collect_tab_titles(
+                    &windows[i],
+                    false,
+                    0,
+                    TAB_WALK_MAX_DEPTH,
+                    &start,
+                    TAB_WALK_BUDGET,
+                    &mut titles,
+                );
+            }
+        }
+        titles
+    })
+}
+
+fn collect_tab_titles(
+    elem: &cidre::ax::UiElement,
+    in_tab_group: bool,
+    depth: usize,
+    max_depth: usize,
+    start: &Instant,
+    budget: Duration,
+    out: &mut Vec<String>,
+) {
+    if depth >= max_depth || start.elapsed() >= budget {
+        return;
+    }
+    let _ = elem.set_messaging_timeout_secs(0.1);
+    let role = match elem.role() {
+        Ok(r) => r.to_string(),
+        Err(_) => return,
+    };
+    if in_tab_group && (role == "AXRadioButton" || role == "AXTab") {
+        if let Some(title) = get_ax_string_attr(elem, cidre::ax::attr::title()) {
+            let title = title.trim();
+            if !title.is_empty() && !out.iter().any(|t| t == title) {
+                out.push(title.to_string());
+            }
+        }
+        return;
+    }
+    // Page content is never the tab strip, and is by far the largest subtree.
+    if role == "AXWebArea" {
+        return;
+    }
+    let in_tab_group = in_tab_group || role == "AXTabGroup";
+    if let Ok(children) = elem.children() {
+        for i in 0..children.len() {
+            collect_tab_titles(
+                &children[i],
+                in_tab_group,
+                depth + 1,
+                max_depth,
+                start,
+                budget,
+                out,
+            );
+        }
+    }
+}
+
 pub(crate) fn resolve_browser_pid(app: &str) -> i32 {
     let app_lower = app.to_lowercase();
     cidre::objc::ar_pool(|| -> i32 {
@@ -609,7 +693,9 @@ pub(crate) fn resolve_browser_pid(app: &str) -> i32 {
         let apps = ws.running_apps();
         for i in 0..apps.len() {
             let a = &apps[i];
-            if process_name_for_pid(a.pid()).is_some_and(|name| name.to_lowercase() == app_lower) {
+            if process_name_for_pid(a.pid())
+                .is_some_and(|name| browser_process_name_matches(&app_lower, &name))
+            {
                 return a.pid();
             }
         }
@@ -623,6 +709,47 @@ mod live_tests {
     // `use super::*` already re-exports the shared helpers this test needs.
     #[allow(unused_imports)]
     use crate::meeting_watcher::shared::*;
+
+    /// What the mic-gated active-tab probe would see for a running browser:
+    /// its pid (alias-aware), every window URL the shared detector can read
+    /// (AXDocument, address bar, AXWebArea), and every tab title.
+    ///
+    /// Run with: SCREENPIPE_LIVE_BROWSER="Zen Browser" cargo test -p screenpipe-engine --lib -- live_tests::test_live_browser_probe --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn test_live_browser_probe() {
+        let app =
+            std::env::var("SCREENPIPE_LIVE_BROWSER").unwrap_or_else(|_| "Zen Browser".to_string());
+        let pid = resolve_browser_pid(&app);
+        println!("\n=== {app}: pid {pid} ===");
+        assert!(
+            pid > 0,
+            "{app} is not running (or its process name has no alias)"
+        );
+
+        let detector = screenpipe_screen::browser_utils::create_url_detector();
+        let started = std::time::Instant::now();
+        let urls = detector.get_window_urls(&app, pid).unwrap_or_default();
+        println!("window URLs ({:?}): {urls:#?}", started.elapsed());
+
+        let started = std::time::Instant::now();
+        let titles = browser_tab_titles(pid);
+        println!("tab titles ({:?}): {titles:#?}", started.elapsed());
+
+        let profiles = load_detection_profiles();
+        for url in &urls {
+            if let Some(c) = crate::meeting_watcher::audio_process::resolve_active_tab_url_candidate(
+                &app, url, &profiles,
+            ) {
+                println!("URL {url} resolves to profile {}", c.profile_index);
+            }
+        }
+        if let Some(c) = crate::meeting_watcher::audio_process::resolve_tab_title_candidate(
+            &app, &titles, &profiles,
+        ) {
+            println!("tab titles resolve to profile {}", c.profile_index);
+        }
+    }
 
     /// Run with: cargo test -p screenpipe-engine --lib -- live_tests::test_live_meeting_detection --nocapture --ignored
     #[test]

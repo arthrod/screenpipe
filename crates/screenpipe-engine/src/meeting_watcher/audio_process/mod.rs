@@ -12,8 +12,8 @@ use crate::meeting_watcher::shared::calendar::{
     calendar_boundary_crossed, calendar_room_identities_now,
 };
 use crate::meeting_watcher::shared::ignore::{
-    browser_window_matches_meeting, contains_normalized_term, is_browser_app,
-    meeting_app_is_ignored_with_terms, normalize_ignored_meeting_apps,
+    browser_tab_title_matches_meeting, browser_window_matches_meeting, contains_normalized_term,
+    is_browser_app, meeting_app_is_ignored_with_terms, normalize_ignored_meeting_apps,
 };
 use crate::meeting_watcher::shared::profiles::{load_detection_profiles, MeetingDetectionProfile};
 use crate::meeting_watcher::shared::telemetry::{
@@ -427,7 +427,7 @@ pub async fn run_audio_process_meeting_detection_loop(
                 info!(
                     "audio-process meeting detector: {} has held the mic for {}s without \
                      resolving to a meeting platform (no fresh URL/title evidence and the \
-                     active-tab probe found no meeting URL; still retrying every poll)",
+                     active-tab probe found no meeting URL or tab title; still retrying every poll)",
                     browser_app,
                     pending_for.as_secs()
                 );

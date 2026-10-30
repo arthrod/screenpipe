@@ -10,10 +10,12 @@ use accessibility_sys::{
 use anyhow::Result;
 use core_foundation::{
     array::CFArray,
-    base::{CFRelease, CFTypeRef, TCFType},
+    base::{CFGetTypeID, CFRelease, CFTypeRef, TCFType},
     string::CFString,
+    url::CFURL,
 };
 use screenpipe_core::osascript::{self, OsascriptOutcome};
+use std::time::{Duration, Instant};
 use tracing::debug;
 use url::Url;
 
@@ -35,6 +37,49 @@ const MAX_PROBED_WINDOWS: usize = 16;
 /// call. The focused-window fast path (`get_url_via_accessibility`) is
 /// unchanged.
 const AX_PROBE_MESSAGING_TIMEOUT_SECS: f32 = 1.0;
+
+/// How deep `find_web_area_url` looks for a window's `AXWebArea`. Firefox-family
+/// browsers (Firefox, Zen) nest it 2–4 levels under the window; the bound keeps
+/// the per-window fallback from turning into a full-chrome walk.
+const WEB_AREA_MAX_DEPTH: usize = 8;
+
+/// `find_web_area_url` recurses over siblings as well as depth, so a broad AX
+/// tree (a window with thousands of chrome elements) could otherwise spend the
+/// caller's whole 3s timeout on one window — and that timeout only abandons
+/// the blocking thread, it cannot stop it. One `WalkBudget` covers every window
+/// of a probe: nodes visited and wall time are both capped, URLs collected
+/// from earlier windows are kept, and a later window never pays for an
+/// earlier wide one.
+const WEB_AREA_WALK_DEADLINE: Duration = Duration::from_millis(1_200);
+const WEB_AREA_MAX_NODES: usize = 1_500;
+
+struct WalkBudget {
+    deadline: Instant,
+    nodes_left: usize,
+}
+
+impl WalkBudget {
+    fn new(deadline: Duration, nodes: usize) -> Self {
+        Self {
+            deadline: Instant::now() + deadline,
+            nodes_left: nodes,
+        }
+    }
+
+    /// Spend one node; `false` once the node count or the deadline is used up.
+    fn charge(&mut self) -> bool {
+        if self.nodes_left == 0 || Instant::now() >= self.deadline {
+            return false;
+        }
+        self.nodes_left -= 1;
+        true
+    }
+}
+
+/// Role of the page-content element. Firefox-family browsers expose the page
+/// URL as this element's `AXURL` instead of a window `AXDocument`.
+const AX_WEB_AREA_ROLE: &str = "AXWebArea";
+const AX_URL_ATTRIBUTE: &str = "AXURL";
 
 pub struct MacOSUrlDetector;
 
@@ -122,6 +167,14 @@ impl MacOSUrlDetector {
             let role_str = cf_role.to_string();
             // cf_role drops here and releases the CF object
 
+            // Page content: Firefox-family browsers (Zen) hide the address bar
+            // and expose no AXDocument, but the AXWebArea carries the page
+            // URL. Either way the address bar is never inside the page, so
+            // this is also where the walk stops descending.
+            if role_str == AX_WEB_AREA_ROLE {
+                return self.web_area_url(element);
+            }
+
             if role_str == kAXTextFieldRole {
                 let mut value: CFTypeRef = std::ptr::null_mut();
                 let status = AXUIElementCopyAttributeValue(
@@ -172,6 +225,89 @@ impl MacOSUrlDetector {
             // children_array drops here, releasing the CF array
         }
 
+        None
+    }
+
+    /// `AXURL` of an `AXWebArea`: the page URL Firefox-family browsers
+    /// (Firefox, Zen) expose instead of a window `AXDocument`. The value is a
+    /// CFURL (a CFString in some builds); only HTTP(S) URLs count.
+    unsafe fn web_area_url(&self, element: AXUIElementRef) -> Option<String> {
+        let mut value: CFTypeRef = std::ptr::null_mut();
+        let status = AXUIElementCopyAttributeValue(
+            element,
+            CFString::from_static_string(AX_URL_ATTRIBUTE).as_concrete_TypeRef(),
+            &mut value,
+        );
+        if status != accessibility_sys::kAXErrorSuccess || value.is_null() {
+            return None;
+        }
+        let type_id = CFGetTypeID(value);
+        // +1 retained either way — create_rule releases on drop.
+        let url_str = if type_id == CFURL::type_id() {
+            CFURL::wrap_under_create_rule(value as _)
+                .get_string()
+                .to_string()
+        } else if type_id == CFString::type_id() {
+            CFString::wrap_under_create_rule(value as _).to_string()
+        } else {
+            CFRelease(value);
+            return None;
+        };
+        if (url_str.starts_with("http://") || url_str.starts_with("https://"))
+            && Url::parse(&url_str).is_ok()
+        {
+            debug!("got URL via AXWebArea AXURL: {}", url_str);
+            Some(url_str)
+        } else {
+            None
+        }
+    }
+
+    /// Depth-bounded search for a window's `AXWebArea` URL (see
+    /// `WEB_AREA_MAX_DEPTH`). Used for non-focused windows, where the full
+    /// address-bar walk is too expensive per window but an AXDocument-less
+    /// Firefox-family window would otherwise report nothing.
+    unsafe fn find_web_area_url(
+        &self,
+        element: AXUIElementRef,
+        depth: usize,
+        budget: &mut WalkBudget,
+    ) -> Option<String> {
+        if depth >= WEB_AREA_MAX_DEPTH || !budget.charge() {
+            return None;
+        }
+        let mut role: CFTypeRef = std::ptr::null_mut();
+        let status = AXUIElementCopyAttributeValue(
+            element,
+            CFString::from_static_string(kAXRoleAttribute).as_concrete_TypeRef(),
+            &mut role,
+        );
+        if status == accessibility_sys::kAXErrorSuccess && !role.is_null() {
+            let role_str = CFString::wrap_under_create_rule(role as _).to_string();
+            if role_str == AX_WEB_AREA_ROLE {
+                return self.web_area_url(element);
+            }
+        }
+
+        let mut children: CFTypeRef = std::ptr::null_mut();
+        let status = AXUIElementCopyAttributeValue(
+            element,
+            CFString::from_static_string(kAXChildrenAttribute).as_concrete_TypeRef(),
+            &mut children,
+        );
+        if status == accessibility_sys::kAXErrorSuccess && !children.is_null() {
+            let children_array =
+                CFArray::<*const std::ffi::c_void>::wrap_under_create_rule(children as _);
+            for child in children_array.iter() {
+                let child = *child as AXUIElementRef;
+                // The messaging timeout is per element: without this a hung
+                // child would block ~6s (system default) per read.
+                let _ = AXUIElementSetMessagingTimeout(child, AX_PROBE_MESSAGING_TIMEOUT_SECS);
+                if let Some(url) = self.find_web_area_url(child, depth + 1, budget) {
+                    return Some(url);
+                }
+            }
+        }
         None
     }
 
@@ -359,7 +495,8 @@ end tell"#;
     ///
     /// The focused window keeps the full `get_active_url` path (AXDocument,
     /// then the address-bar tree walk); the remaining windows are
-    /// AXDocument-only — a tree walk per window would multiply the dominant
+    /// AXDocument-only, with a depth-bounded AXWebArea lookup when there is no
+    /// AXDocument — a full tree walk per window would multiply the dominant
     /// AX IPC cost by the window count, and the probe call site runs under a
     /// 3s timeout.
     fn get_window_urls_via_accessibility(&self, process_id: i32) -> Result<Vec<String>> {
@@ -388,6 +525,7 @@ end tell"#;
                 // +1 retained — create_rule releases the array on drop
                 let windows =
                     CFArray::<*const std::ffi::c_void>::wrap_under_create_rule(windows_ref as _);
+                let mut budget = WalkBudget::new(WEB_AREA_WALK_DEADLINE, WEB_AREA_MAX_NODES);
                 for (i, window) in windows.iter().enumerate() {
                     if i >= MAX_PROBED_WINDOWS {
                         break;
@@ -396,7 +534,12 @@ end tell"#;
                     let _ = AXUIElementSetMessagingTimeout(window, AX_PROBE_MESSAGING_TIMEOUT_SECS);
                     // The focused window shows up here too; string dedupe
                     // keeps the list clean without AX element comparisons.
-                    if let Some(url) = self.window_document_url(window) {
+                    // Windows without an AXDocument (Firefox-family) get the
+                    // bounded AXWebArea lookup instead.
+                    let url = self
+                        .window_document_url(window)
+                        .or_else(|| self.find_web_area_url(window, 0, &mut budget));
+                    if let Some(url) = url {
                         if !urls.contains(&url) {
                             urls.push(url);
                         }
@@ -489,5 +632,35 @@ impl BrowserUrlDetector for MacOSUrlDetector {
         } else {
             Ok(Vec::new())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walk_budget_stops_at_the_node_limit() {
+        let mut budget = WalkBudget::new(Duration::from_secs(10), 2);
+        assert!(budget.charge());
+        assert!(budget.charge());
+        assert!(!budget.charge());
+        assert!(!budget.charge(), "exhaustion is sticky");
+    }
+
+    #[test]
+    fn walk_budget_stops_at_the_deadline() {
+        let mut budget = WalkBudget::new(Duration::ZERO, 1_000);
+        assert!(!budget.charge());
+    }
+
+    #[test]
+    fn walk_budget_fits_inside_the_probe_timeout() {
+        // audio_process::macos wraps the probe in a 3s timeout; the walk must
+        // leave room for the per-element messaging timeout to fire once.
+        assert!(
+            WEB_AREA_WALK_DEADLINE + Duration::from_secs_f32(AX_PROBE_MESSAGING_TIMEOUT_SECS)
+                < Duration::from_secs(3)
+        );
     }
 }

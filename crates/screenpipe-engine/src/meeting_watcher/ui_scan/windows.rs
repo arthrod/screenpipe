@@ -681,6 +681,7 @@ pub(crate) fn discord_profile() -> Option<MeetingDetectionProfile> {
             windows_process_names: &["discord.exe"],
             browser_url_patterns: &[],
             browser_title_patterns: &[],
+            browser_tab_title_patterns: &[],
         },
         call_signals: vec![
             CallSignal::RoleWithName {

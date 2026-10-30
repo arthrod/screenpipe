@@ -126,6 +126,32 @@ pub(crate) async fn should_use_ax_fallback(
 /// parameter on an unrelated page can't resolve (#4246). The stored
 /// `meeting_url` keeps the browser-reported form for parity with the DB
 /// evidence path.
+/// Resolve a mic-holding browser from the titles of ALL its tabs, for
+/// profiles that opt in via `browser_tab_title_patterns`.
+///
+/// Last resort after the URL probe: Firefox-family browsers (Zen) expose a URL
+/// only for the active tab, so a Google Voice call in a background tab has no
+/// URL evidence at all — but every tab title is in the window's AXTabGroup.
+/// Only called while the browser holds the mic (same gating as the URL probe);
+/// the title is identity, not proof of a call, which the mic hold supplies.
+/// No URL is known, so `meeting_url` is `None`.
+pub(crate) fn resolve_tab_title_candidate(
+    browser_app: &str,
+    tab_titles: &[String],
+    profiles: &[MeetingDetectionProfile],
+) -> Option<AxResolvedCandidate> {
+    profiles.iter().enumerate().find_map(|(idx, profile)| {
+        tab_titles
+            .iter()
+            .any(|title| browser_tab_title_matches_meeting(title, profile))
+            .then(|| AxResolvedCandidate {
+                browser_app: browser_app.to_string(),
+                profile_index: idx,
+                meeting_url: None,
+            })
+    })
+}
+
 pub(crate) fn resolve_active_tab_url_candidate(
     browser_app: &str,
     active_tab_url: &str,
@@ -149,6 +175,41 @@ pub(crate) fn resolve_active_tab_url_candidate(
             None
         }
     })
+}
+
+/// Resolve one browser process's candidate from its evidence sources in
+/// order: active-tab URLs, then Little Arc window titles, then tab titles.
+/// A candidate for a platform the user ignores is skipped *at its source* so
+/// the next source still gets its turn: an ignored Meet URL in one window
+/// must not shadow a Google Voice call in a background tab.
+pub(crate) fn resolve_browser_candidate_chain(
+    browser_app: &str,
+    active_tab_urls: &[String],
+    little_arc: impl FnOnce() -> Option<AxResolvedCandidate>,
+    tab_titles: impl FnOnce() -> Vec<String>,
+    profiles: &[MeetingDetectionProfile],
+    ignored_terms: &[String],
+) -> Option<AxResolvedCandidate> {
+    let accepted = |candidate: AxResolvedCandidate| {
+        let profile = profiles.get(candidate.profile_index)?;
+        let platform = platform_name_for_profile(profile, true);
+        (!meeting_app_is_ignored_with_terms(&platform, profile, ignored_terms)).then_some(candidate)
+    };
+    active_tab_urls
+        .iter()
+        .find_map(|url| {
+            resolve_active_tab_url_candidate(browser_app, url, profiles).and_then(&accepted)
+        })
+        .or_else(|| little_arc().and_then(&accepted))
+        .or_else(|| {
+            if !profiles
+                .iter()
+                .any(|p| !p.app_identifiers.browser_tab_title_patterns.is_empty())
+            {
+                return None;
+            }
+            resolve_tab_title_candidate(browser_app, &tab_titles(), profiles).and_then(&accepted)
+        })
 }
 
 /// Return the Google Meet meeting code if a window title IS one: exactly
@@ -648,6 +709,8 @@ pub(crate) fn platform_name_for_profile(
 
     if has_pattern("meet.google.com") {
         "Google Meet".to_string()
+    } else if has_pattern("voice.google.com") {
+        "Google Voice".to_string()
     } else if has_pattern("zoom.us") {
         "Zoom".to_string()
     } else if has_pattern("teams.microsoft.com") || has_pattern("teams.live.com") {
