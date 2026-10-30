@@ -408,10 +408,12 @@ jobs:
     # Pinned off `macos-latest`: that label rolled to the Xcode 26.5 image whose
     # clang toolchain is missing `clang_rt.osx`, so `cargo test`'s debug link
     # fails with `ld: library 'clang_rt.osx' not found` (green on the 3 prior
-    # commits, then red on the next 2 with no related code change). macos-14
-    # (Sonoma) has a complete toolchain and is proven here — e2e-macos.yml builds
-    # screenpipe-screen on it and passes. Revisit when macos-latest is fixed.
-    runs-on: macos-14
+    # commits, then red on the next 2 with no related code change). macos-15
+    # (Sequoia) has a complete toolchain and already carries e2e-test.yml's
+    # desktop job. macos-14 is gone: GitHub browned it out through October 2026
+    # and retires it on 2026-11-02 (actions/runner-images#13518); every job
+    # pinned to it is cancelled at start. Revisit when macos-latest is fixed.
+    runs-on: macos-15
     # A hung test otherwise burns the 6-hour GitHub default and blocks the
     # merge queue.
     timeout-minutes: 90
