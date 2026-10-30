@@ -150,6 +150,7 @@ mod staged_update;
 mod stale_tier;
 mod startup_auth;
 mod stop_watchdog;
+mod low_swap_control;
 mod update_restart;
 mod update_diagnostics;
 mod updates;
@@ -759,10 +760,13 @@ async fn main() {
     // the process env itself.
 
     // This instance owns the launch (duplicates exited above). Keep macOS from
-    // napping, suspending, or terminating the recorder, and start the SIGCONT
-    // watchdog that undoes a BSD stop the app cannot recover from by itself.
+    // napping, suspending, or terminating the recorder: leave the kernel's
+    // suspend-on-swap-exhaustion pool (what froze the app for 17 h on
+    // 2026-10-29), hold a process activity, and start the SIGCONT watchdog
+    // that undoes a stop or suspension the app cannot recover from by itself.
     #[cfg(target_os = "macos")]
     {
+        low_swap_control::opt_out_of_low_swap_suspension();
         process_activity::begin_recording_activity();
         stop_watchdog::spawn_for_current_process();
     }

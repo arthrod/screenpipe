@@ -4,14 +4,24 @@
 //!
 //! On 2026-10-29 the installed app sat for 17 hours with every thread parked
 //! mid-instruction at 0% CPU, still answering nothing: not a crash, not a
-//! deadlock, but a BSD-level stop (`SSTOP`) that a single `kill -CONT` undid
-//! instantly. The stop coincided with RunningBoard/MenuBarAgent taking
-//! "Suspendable" assertions on menu-bar apps under Low Power Mode and memory
-//! pressure. A stopped process cannot help itself, so the app launches a copy
-//! of its own binary in `--watchdog <pid>` mode, in its own process group,
-//! which polls the parent's BSD state and sends SIGCONT when it finds it
-//! stopped. Recording is the hot path: a stopped recorder is silent data
-//! loss, and this costs one `proc_pidinfo` call every `POLL_INTERVAL`.
+//! deadlock, and not a signal stop either (`ps` still said `S`), but a Mach
+//! `task_suspend` that a single `kill -CONT` undid instantly. The actor is the
+//! kernel: launchd spawns this app with `POSIX_SPAWN_PCONTROL_SUSPEND`
+//! (`proc_pidinfo` flag `PROC_FLAG_PC_SUSP`), and when the compressor pool /
+//! swap runs out, `no_paging_space_action` picks the biggest such process and
+//! `proc_dopcontrol` suspends it ("memorystatus: suspending screenpipe-app
+//! [765] due to swap exhaustion"), setting `PROC_FLAG_PA_SUSP`. That day had
+//! 0 GB free, swap 14/18 GB, and jetsam killing the app's own XPC child 11 s
+//! earlier. Nothing ever resumes such a process unless the user finds the
+//! "run out of application memory" dialog. `low_swap_control` now opts the
+//! app out of that pool; this watchdog is the second line: a suspended process
+//! cannot help itself, so the app launches a copy of its own binary in
+//! `--watchdog <pid>` mode, in its own process group, which polls the parent's
+//! BSD state and sends SIGCONT when it is stopped by a signal (`SSTOP`) OR
+//! carries `PA_SUSP`. SIGCONT reaches `task_resume_internal` in both cases
+//! (XNU `psignal_internal`). Recording is the hot path: a stopped recorder is
+//! silent data loss, and this costs one `proc_pidinfo` call every
+//! `POLL_INTERVAL`.
 //!
 //! The watchdog never continues a process a debugger holds (`P_TRACED`), and
 //! exits on its own once the parent is gone.
@@ -35,10 +45,10 @@ pub const POLL_INTERVAL: Duration = Duration::from_secs(15);
 const PROC_FLAG_TRACED: u32 = 0x2;
 /// "In resource starvation situations, this process is to be suspended."
 #[cfg(target_os = "macos")]
-const PROC_FLAG_PC_SUSP: u32 = 0x400;
+pub(crate) const PROC_FLAG_PC_SUSP: u32 = 0x400;
 /// "The process is currently suspended due to resource starvation."
 #[cfg(target_os = "macos")]
-const PROC_FLAG_PA_SUSP: u32 = 0x1000;
+pub(crate) const PROC_FLAG_PA_SUSP: u32 = 0x1000;
 
 #[cfg(target_os = "macos")]
 fn is_traced(flags: u32) -> bool {
@@ -79,7 +89,7 @@ fn parent_still_ours(parent: i32) -> bool {
 /// Why `bsd_info` could not read a process.
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Probe {
+pub(crate) enum Probe {
     /// No such process.
     Gone,
     /// The process exists but could not be inspected (errno); keep watching.
@@ -116,13 +126,46 @@ where
     None
 }
 
+/// How the parent came to be stopped; both are undone by SIGCONT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stopped {
+    /// A stop signal (`SSTOP`, what `ps` shows as `T`).
+    Signal,
+    /// The kernel's no-paging-space action `task_suspend`ed it
+    /// (`PROC_FLAG_PA_SUSP`); `ps` still shows `S`.
+    SwapExhaustion,
+}
+
+/// The watchdog's one decision, kept pure because swap exhaustion cannot be
+/// reproduced in a test. `SSTOP` wins over the flag so the log names what
+/// `ps` would have shown.
+fn stopped_how(status: u32, flags: u32) -> Option<Stopped> {
+    if status == libc::SSTOP {
+        Some(Stopped::Signal)
+    } else if flags & PROC_FLAG_PA_SUSP != 0 {
+        Some(Stopped::SwapExhaustion)
+    } else {
+        None
+    }
+}
+
+/// `PA_SUSP` never clears (only root's `proc_resetpcontrol` does), so after a
+/// swap-exhaustion revive every tick keeps re-sending a harmless SIGCONT; log
+/// only when the reason changes, and again if the parent runs normally for a
+/// tick first.
+fn should_log(last: &mut Option<Stopped>, now: Option<Stopped>) -> bool {
+    let changed = now.is_some() && now != *last;
+    *last = now;
+    changed
+}
+
 /// What one watchdog tick did to the parent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tick {
     /// Parent is running (or sleeping) normally.
     Running,
-    /// Parent was stopped and SIGCONT was sent; carries its `pbi_flags`.
-    Revived(u32),
+    /// Parent was stopped and SIGCONT was sent; carries how and its `pbi_flags`.
+    Revived(Stopped, u32),
     /// Parent is stopped under a debugger; left alone.
     Traced,
     /// Parent could not be inspected this tick (errno); keep watching.
@@ -133,7 +176,7 @@ pub enum Tick {
 
 /// Parent's BSD state via `proc_pidinfo(PROC_PIDTBSDINFO)`.
 #[cfg(target_os = "macos")]
-fn bsd_info(pid: i32) -> Result<libc::proc_bsdinfo, Probe> {
+pub(crate) fn bsd_info(pid: i32) -> Result<libc::proc_bsdinfo, Probe> {
     // SAFETY: proc_bsdinfo is plain data; proc_pidinfo fills exactly `size`
     // bytes on success and reports how many it wrote.
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -159,7 +202,9 @@ fn bsd_info(pid: i32) -> Result<libc::proc_bsdinfo, Probe> {
 /// `None` when there is no such process (or it cannot be inspected).
 #[cfg(target_os = "macos")]
 pub fn process_is_stopped(pid: i32) -> Option<bool> {
-    bsd_info(pid).ok().map(|info| info.pbi_status == libc::SSTOP)
+    bsd_info(pid)
+        .ok()
+        .map(|info| info.pbi_status == libc::SSTOP)
 }
 
 /// One watchdog tick: inspect the parent and continue it if it is stopped.
@@ -170,16 +215,16 @@ pub fn tick(parent: i32) -> Tick {
         Err(Probe::Gone) => return Tick::Gone,
         Err(Probe::Unreadable(errno)) => return Tick::Unreadable(errno),
     };
-    if info.pbi_status != libc::SSTOP {
+    let Some(how) = stopped_how(info.pbi_status, info.pbi_flags) else {
         return Tick::Running;
-    }
+    };
     if is_traced(info.pbi_flags) {
         return Tick::Traced;
     }
     // SAFETY: plain signal send to a pid we just inspected.
     let sent = unsafe { libc::kill(parent, libc::SIGCONT) } == 0;
     if sent {
-        Tick::Revived(info.pbi_flags)
+        Tick::Revived(how, info.pbi_flags)
     } else {
         Tick::Gone
     }
@@ -222,6 +267,7 @@ fn log_line(message: &str) {
 pub fn run(parent: i32) -> i32 {
     log_line(&format!("watching parent pid={parent}"));
     let mut unreadable_logged = false;
+    let mut last_revive: Option<Stopped> = None;
     loop {
         std::thread::sleep(POLL_INTERVAL);
         if !parent_still_ours(parent) {
@@ -231,7 +277,9 @@ pub fn run(parent: i32) -> i32 {
             return 0;
         }
         match tick(parent) {
-            Tick::Running => {}
+            Tick::Running => {
+                should_log(&mut last_revive, None);
+            }
             Tick::Unreadable(errno) => {
                 if !unreadable_logged {
                     log_line(&format!(
@@ -240,11 +288,19 @@ pub fn run(parent: i32) -> i32 {
                     unreadable_logged = true;
                 }
             }
-            Tick::Revived(flags) => {
-                log_line(&format!(
-                    "parent pid={parent} was stopped (SSTOP) with pbi_flags={}; sent SIGCONT",
-                    describe_flags(flags)
-                ));
+            Tick::Revived(how, flags) => {
+                if should_log(&mut last_revive, Some(how)) {
+                    let what = match how {
+                        Stopped::Signal => "stopped by a signal (SSTOP)",
+                        Stopped::SwapExhaustion => {
+                            "suspended by the kernel for swap exhaustion (PA_SUSP)"
+                        }
+                    };
+                    log_line(&format!(
+                        "parent pid={parent} was {what} with pbi_flags={}; sent SIGCONT",
+                        describe_flags(flags)
+                    ));
+                }
             }
             Tick::Traced => {
                 log_line(&format!(
@@ -353,12 +409,50 @@ mod tests {
         assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
         wait_for(pid, Some(true));
 
-        assert!(matches!(tick(pid), Tick::Revived(_)));
+        assert!(matches!(tick(pid), Tick::Revived(Stopped::Signal, _)));
         wait_for(pid, Some(false));
         assert_eq!(tick(pid), Tick::Running);
 
         child.kill().expect("kill sleep");
         child.wait().expect("reap sleep");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn swap_exhaustion_suspension_needs_sigcont_even_while_status_says_running() {
+        // 2026-10-29: `ps` said S, pbi_status was never SSTOP, and the process
+        // was still frozen. The control bit alone (PC_SUSP) is not a stop.
+        assert_eq!(
+            stopped_how(libc::SRUN, PROC_FLAG_PA_SUSP),
+            Some(Stopped::SwapExhaustion)
+        );
+        assert_eq!(
+            stopped_how(libc::SSLEEP, PROC_FLAG_PC_SUSP | PROC_FLAG_PA_SUSP),
+            Some(Stopped::SwapExhaustion)
+        );
+        assert_eq!(stopped_how(libc::SRUN, PROC_FLAG_PC_SUSP), None);
+        assert_eq!(stopped_how(libc::SSLEEP, 0), None);
+        assert_eq!(stopped_how(libc::SSTOP, 0), Some(Stopped::Signal));
+        assert_eq!(
+            stopped_how(libc::SSTOP, PROC_FLAG_PA_SUSP),
+            Some(Stopped::Signal)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn swap_exhaustion_revive_is_logged_once_until_the_parent_runs_again() {
+        let mut last = None;
+        assert!(should_log(&mut last, Some(Stopped::SwapExhaustion)));
+        // PA_SUSP persists, so the next ticks revive again: stay quiet.
+        assert!(!should_log(&mut last, Some(Stopped::SwapExhaustion)));
+        assert!(!should_log(&mut last, Some(Stopped::SwapExhaustion)));
+        // A different reason is news.
+        assert!(should_log(&mut last, Some(Stopped::Signal)));
+        assert!(!should_log(&mut last, Some(Stopped::Signal)));
+        // Running normally resets, so a later stop is logged again.
+        assert!(!should_log(&mut last, None));
+        assert!(should_log(&mut last, Some(Stopped::Signal)));
     }
 
     #[cfg(target_os = "macos")]
@@ -400,7 +494,10 @@ mod tests {
         assert_eq!(tick(pid), Tick::Gone);
         // Any other errno keeps the watchdog alive instead of abandoning the app.
         assert_eq!(classify_probe_error(libc::ESRCH), Probe::Gone);
-        assert_eq!(classify_probe_error(libc::EPERM), Probe::Unreadable(libc::EPERM));
+        assert_eq!(
+            classify_probe_error(libc::EPERM),
+            Probe::Unreadable(libc::EPERM)
+        );
     }
 
     #[cfg(target_os = "macos")]
