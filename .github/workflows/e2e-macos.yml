@@ -19,7 +19,7 @@ jobs:
   # No screen recording or mic — tests what we can without permissions
   e2e-hosted:
     name: macOS E2E (hosted)
-    runs-on: macos-14  # M1, Sonoma
+    runs-on: macos-15  # Apple Silicon, Sequoia; macos-14 retired 2026-11-02 (actions/runner-images#13518)
     timeout-minutes: 45
     if: >
       github.event_name == 'schedule' ||

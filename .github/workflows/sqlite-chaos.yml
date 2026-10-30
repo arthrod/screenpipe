@@ -42,7 +42,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14]
+        # macos-15, not macos-14: GitHub retires macos-14 on 2026-11-02 and
+        # cancels jobs pinned to it during the brownouts before that
+        # (actions/runner-images#13518). Same pin as ci.yml's test-macos.
+        os: [ubuntu-latest, macos-15]
 
     steps:
       - uses: actions/checkout@v4
